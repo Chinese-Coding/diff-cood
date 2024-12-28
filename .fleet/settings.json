@@ -1,0 +1,16 @@
+{
+    "excluded": [],
+    "editor.formatOnSave": true,
+    "plugins": [
+        {
+            "type": "add",
+            "pluginName": "com.github.catppuccin.fleet"
+        },
+        {
+            "type": "add",
+            "pluginName": "izhangzhihao.fleet.rainbow.brackets"
+        }
+    ],
+    "editor.guides": [],
+    "backend.maxHeapSizeMb": 14870
+}
