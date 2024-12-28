@@ -133,7 +133,7 @@ def log_validation(
         for _ in range(args.num_validation_images):
             with inference_ctx:
                 image = \
-                    pipeline(validation_prompt, validation_image, num_inference_steps=20, generator=generator).images[0]
+                pipeline(validation_prompt, validation_image, num_inference_steps=20, generator=generator).images[0]
 
             images.append(image)
 

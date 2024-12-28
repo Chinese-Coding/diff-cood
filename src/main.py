@@ -1,7 +1,5 @@
-import einops
-from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel, DDPMScheduler
 from torch.utils.data import DataLoader
-from transformers import PretrainedConfig, AutoTokenizer
+from transformers import AutoTokenizer
 from pathlib import Path
 from accelerate.utils import ProjectConfiguration
 from accelerate import Accelerator
@@ -13,32 +11,43 @@ from accelerate.logging import get_logger
 import torch.nn.functional as F
 import math
 
+from modules.dpt_processor import DptProcessor
+from modules.img_processor import ImgProcessor
+
 logger = get_logger(__name__)
 
 
-def import_model_class_from_pretrained_model(pretrained_model: str, revision: str):
-    text_encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model,
-        subfolder="text_encoder",
-        revision=revision,
+def _init_modules(args, accelerator_project_config, processor_class, optimizer_class):
+    accelerator = Accelerator(
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        mixed_precision=args.mixed_precision,
+        log_with=args.report_to,
+        project_config=accelerator_project_config,
     )
-    model_class = text_encoder_config.architectures[0]
+    processor = processor_class(args.pretrained_model, args.revision)
+    optimizer = optimizer_class(
+        processor.unet.parameters(),
+        lr=args.learning_rate,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
+    )
+    lr_scheduler = get_scheduler(
+        args.lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
+        num_training_steps=args.max_train_steps * accelerator.num_processes,
+        num_cycles=args.lr_num_cycles,
+        power=args.lr_power,
+    )
 
-    if model_class == "CLIPTextModel":
-        from transformers import CLIPTextModel
-
-        return CLIPTextModel
-    elif model_class == "RobertaSeriesModelWithTransformation":
-        from diffusers.pipelines.alt_diffusion.modeling_roberta_series import RobertaSeriesModelWithTransformation
-
-        return RobertaSeriesModelWithTransformation
-    else:
-        raise ValueError(f"{model_class} is not supported.")
+    unet, optimizer, lr_scheduler = accelerator.prepare(processor.unet, optimizer, lr_scheduler)
+    processor.unt = unet  # 记得更新一下
+    return accelerator, processor, optimizer, lr_scheduler
 
 
 def main(args):
     """加载模型 (TODO: 一些不需要训练的模型能共用一个吗?)"""
-    text_encoder_cls = import_model_class_from_pretrained_model(args.pretrained_model, args.revision)
     logging_dir = Path(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
@@ -75,84 +84,21 @@ def main(args):
     TODO: 模型定义部分还可以改进, 可以使用 python 向程序中直接添加变量的方式,
     这样只需要定义一个函数然后再制定一个前缀就可以了
     """
-    # 图像部分模型
-    img_accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
-        project_config=accelerator_project_config,
+    # 加载模型
+    img_accelerator, img_processor, img_optimizer, img_lr_scheduler = _init_modules(
+        args, accelerator_project_config, ImgProcessor, optimizer_class
     )
-
-    img_vae = AutoencoderKL.from_pretrained(args.pretrained_model, subfolder="vae")
-    img_unet = UNet2DConditionModel.from_pretrained(args.pretrained_model, subfolder="unet")
-    img_text_encoder = text_encoder_cls.from_pretrained(args.pretrained_model, subfolder="text_encoder")
-    img_controlnet = ControlNetModel.from_pretrained(args.pretrained_model)
-    img_noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model, subfolder="scheduler")
-
-    img_vae.requires_grad_(False)
-    img_unet.train()
-    img_text_encoder.requires_grad_(False)
-    img_controlnet.requires_grad_(False)
-
-    img_optimizer = optimizer_class(
-        img_unet.parameters(),
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
+    dpt_accelerator, dpt_processor, dpt_optimizer, dpt_lr_scheduler = _init_modules(
+        args, accelerator_project_config, DptProcessor, optimizer_class
     )
-
-    img_lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=img_optimizer,
-        num_warmup_steps=args.lr_warmup_steps * img_accelerator.num_processes,
-        num_training_steps=args.max_train_steps * img_accelerator.num_processes,
-        num_cycles=args.lr_num_cycles,
-        power=args.lr_power,
-    )
-
-    img_unet, img_optimizer, img_lr_scheduler = img_accelerator.prepare(img_unet, img_optimizer, img_lr_scheduler)
-
-    # 点云处理部分 (目前先按照参考项目的来设置)
-    dpt_accelerator = Accelerator(
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
-        mixed_precision=args.mixed_precision,
-        log_with=args.report_to,
-        project_config=accelerator_project_config,
-    )
-    dpt_vae = AutoencoderKL.from_pretrained(args.pretrained_model, subfolder="vae")
-    dpt_unet = UNet2DConditionModel.from_pretrained(args.pretrained_model, subfolder="unet")
-    dpt_text_encoder = text_encoder_cls.from_pretrained(args.pretrained_model, subfolder="text_encoder")
-    dpt_controlnet = ControlNetModel.from_pretrained(args.pretrained_model)
-    dpt_noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model, subfolder="scheduler")
-
-    dpt_vae.requires_grad_(False)
-    dpt_unet.train()
-    dpt_text_encoder.requires_grad_(False)
-    dpt_controlnet.requires_grad_(False)
-
-    dpt_optimizer = optimizer_class(
-        dpt_unet.parameters(),
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
-    )
-    dpt_lr_scheduler = get_scheduler(
-        args.lr_scheduler,
-        optimizer=dpt_optimizer,
-        num_warmup_steps=args.lr_warmup_steps * dpt_accelerator.num_processes,
-        num_training_steps=args.max_train_steps * dpt_accelerator.num_processes,
-        num_cycles=args.lr_num_cycles,
-        power=args.lr_power,
-    )
-    dpt_unet, dpt_optimizer, dpt_lr_scheduler = dpt_accelerator.prepare(dpt_unet, dpt_optimizer, dpt_lr_scheduler)
 
     weight_dtype = torch.float32
     if img_accelerator.mixed_precision == "fp16" and dpt_accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
     elif img_accelerator.mixed_precision == "bf16" and dpt_accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
+    img_processor.set_weight_type(weight_dtype)
+    dpt_processor.set_weight_type(weight_dtype)
 
     """优化部分"""
     if args.enable_xformers_memory_efficient_attention:
@@ -168,21 +114,14 @@ def main(args):
                     " update xFormers to at least 0.0.17. See"
                     " https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
                 )
-            img_unet.enable_xformers_memory_efficient_attention()
-            img_controlnet.enable_xformers_memory_efficient_attention()
-            dpt_unet.enable_xformers_memory_efficient_attention()
-            img_controlnet.enable_xformers_memory_efficient_attention()
+                img_processor.enable_xformers_memory_efficient_attention()
+                dpt_processor.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
     """移动模型到指定设备上"""
-    img_vae.to(img_accelerator.device, dtype=weight_dtype)
-    img_controlnet.to(img_accelerator.device, dtype=weight_dtype)
-    img_text_encoder.to(img_accelerator.device, dtype=weight_dtype)
-
-    dpt_vae.to(dpt_accelerator.device, dtype=weight_dtype)
-    dpt_controlnet.to(dpt_accelerator, dtype=weight_dtype)
-    dpt_text_encoder.to(dpt_accelerator, dtype=weight_dtype)
+    img_processor.to(img_accelerator.device, dtype=weight_dtype)
+    dpt_processor.to(dpt_accelerator.device, dtype=weight_dtype)
 
     initial_global_step = 0
     # progress_bar = tqdm(
@@ -193,56 +132,9 @@ def main(args):
     first_epoch = 0
     for epoch in range(first_epoch, args.train_epochs):
         for step, batch in enumerate(train_dataloader):
-            with img_accelerator.accumulate(img_unet), dpt_accelerator.accumulate(dpt_unet):
-                """图像部分"""
-                imgs = batch["img"]
-                # TODO: 不确定这样是对还是错
-                imgs = einops.rearrange(imgs, "b n c h w -> b * n c h w")
-                img_latents = img_vae.encode(imgs.to(dtype=weight_dtype)).latent_dist.sample()
-                img_latents = img_latents * img_vae.config.scaling_factor
-
-                img_noise = torch.randn_like(img_latents)
-                img_bsz = img_latents.shape[0]
-                img_timestamps = torch.randint(
-                    0, img_noise_scheduler.config.num_train_timesteps, (img_bsz,), device=img_latents.device
-                ).long()
-                img_noisy_latents = img_noise_scheduler.add_noise(img_latents.float(), img_noise.float(),
-                                                                  img_timestamps).to(
-                    dtype=weight_dtype
-                )
-                img_encoder_hidden_states = img_text_encoder(batch["inputs_ids"], return_dict=False)[0]
-                img_noise_pred = img_unet(
-                    img_noisy_latents, img_timestamps, encoder_hidden_states=img_encoder_hidden_states,
-                    return_dict=False
-                )
-
-                """点云部分 (TODO: 即将深度信息作为输入, 又将其作为控制条件)"""
-                dpt = batch["dpt"]
-                dpt_latents = dpt_vae.encode(dpt.to(dtype=weight_dtype)).latent_dist.sample()
-                dpt_latents = dpt_latents * dpt_vae.config.scaling_factor
-                dpt_noise = torch.randn_like(dpt_latents)
-                dpt_bsz = dpt_latents.shape[0]
-                dpt_timestamps = torch.randint(
-                    0, dpt_noise_scheduler.config.num_train_timesteps, (dpt_bsz,), device=dpt_latents.device
-                ).long()
-                dpt_noisy_latents = dpt_noise_scheduler.add_noise(dpt_latents.float(), dpt_noise.float(),
-                                                                  dpt_timestamps).to(
-                    dtype=weight_dtype
-                )
-                down_block_res_samples, mid_block_res_sample = dpt_controlnet(
-                    dpt_noisy_latents,
-                    dpt_latents,
-                    controlnet_cond=dpt.to(dtype=weight_dtype),
-                    return_dict=False,
-                )
-                dpt_noise_pred = dpt_unet(
-                    dpt_noisy_latents,
-                    dpt_timestamps,
-                    down_block_additional_residuals=[sample.to(dtype=weight_dtype) for sample in
-                                                     down_block_res_samples],
-                    mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
-                    return_dict=False,
-                )
+            with img_accelerator.accumulate(img_processor.unet), dpt_accelerator.accumulate(dpt_processor.unet):
+                img_noise, img_noise_pred = img_processor(batch["img"], batch["inputs_ids"])
+                dpt_noise, dpt_noise_pred = dpt_processor(batch["dpt"])
 
                 # 计算损失与优化部分
                 img_loss = F.mse_loss(img_noise_pred.float(), img_noise.float(), reduction="mean")

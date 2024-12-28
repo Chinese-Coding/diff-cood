@@ -8,26 +8,26 @@ from diffusers import StableDiffusionXLControlNetPipeline
 
 class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
     def forward(
-        self,
-        sample: torch.Tensor,
-        timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states: torch.Tensor,
-        class_labels: Optional[torch.Tensor] = None,
-        timestep_cond: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-        mid_block_additional_residual: Optional[torch.Tensor] = None,
-        down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        retrun_dict: bool = True,
+            self,
+            sample: torch.Tensor,
+            timestep: Union[torch.Tensor, float, int],
+            encoder_hidden_states: torch.Tensor,
+            class_labels: Optional[torch.Tensor] = None,
+            timestep_cond: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+            added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+            down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+            mid_block_additional_residual: Optional[torch.Tensor] = None,
+            down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+            encoder_attention_mask: Optional[torch.Tensor] = None,
+            retrun_dict: bool = True,
     ) -> Tuple:
         # By default samples have to be AT least a multiple of the overall upsampling factor.
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
         # on the fly if necessary.
-        default_overall_up_factor = 2**self.num_upsamplers
+        default_overall_up_factor = 2 ** self.num_upsamplers
 
         # upsample size should be forwarded when sample is not a multiple of `default_overall_up_factor`
         forward_upsample_size = False
@@ -74,7 +74,8 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
         if class_emb is not None:
             emb = torch.cat([emb, class_emb], dim=-1) if self.config.class_embeddings_concat else emb + class_emb
 
-        aug_emb = self.get_aug_embed(emb=emb, encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+        aug_emb = self.get_aug_embed(emb=emb, encoder_hidden_states=encoder_hidden_states,
+                                     added_cond_kwargs=added_cond_kwargs)
         if self.config.addition_embed_type == "image_hint":
             aug_emb, hint = aug_emb
             sample = torch.cat([sample, hint], dim=1)
@@ -147,7 +148,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
             new_down_block_res_samples = ()
 
             for down_block_res_sample, down_block_additional_residual in zip(
-                down_block_res_samples, down_block_additional_residuals
+                    down_block_res_samples, down_block_additional_residuals
             ):
                 down_block_res_sample = down_block_res_sample + down_block_additional_residual
                 new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
@@ -170,9 +171,9 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
             interm_sample.append(sample)
         # To support T2I-Adapter-XL
         if (
-            is_adapter
-            and len(down_intrablock_additional_residuals) > 0
-            and sample.shape == down_intrablock_additional_residuals[0].shape
+                is_adapter
+                and len(down_intrablock_additional_residuals) > 0
+                and sample.shape == down_intrablock_additional_residuals[0].shape
         ):
             sample += down_intrablock_additional_residuals.pop(0)
             interm_sample.append(sample)
@@ -185,7 +186,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
-            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            res_samples = down_block_res_samples[-len(upsample_block.resnets):]
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
 
             # if we have not reached the final block and need to forward the upsample size, we do it here
