@@ -52,6 +52,9 @@ class BaseProcessor(nn.Module):
         self.unet.enable_xformers_memory_efficient_attention()
         self.controlnet.enable_xformers_memory_efficient_attention()
 
+    def enable_gradient_checkpointing(self):
+        self.unet.enable_gradient_checkpointing()
+
     def to(self, device, dtype):
         """为什么 `unet` 不迁移呢? 因为 unet 使用 accelerator 进行管理 (参考代码至少是这样的)"""
         self.vae.to(device, dtype)

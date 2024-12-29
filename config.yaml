@@ -1,9 +1,10 @@
 pretrained_model: /home/zfq/Desktop/stable-diffusion-2-1-base
 control_model: /home/zfq/Desktop/controlnet-sd21-depth-diffusers
-revision: None
+revision: null
 output_dir: /home/zfq/Desktop/logs/controlnet
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
+resume_from_checkpoint: null
 
 # 训练有关的配置文件
 use_8bit_adam: true
@@ -12,10 +13,14 @@ batch_size: 1
 gradient_accumulation_steps: 1
 mixed_precision: fp16
 report_to: tensorboard
-max_train_steps: None # 如果不为 None 则会在程序中用于替代 `train_epochs`
+max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
 train_epochs: 1
 resolution: 512
 num_workers: 4
+checkpointing_steps: 500
+checkpoints_total_limit: 100
+gradient_checkpointing: true
+allow_tf32: true
 
 # 优化器有关参数 (大部分都是根据 `train_controlnet` 写的)
 learning_rate: 5e-6
@@ -28,3 +33,4 @@ lr_warmup_steps: 500
 lr_num_cycles: 1
 lr_power: 1.0
 set_grads_to_none: true
+max_grad_norm: 1.0
