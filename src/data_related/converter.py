@@ -6,21 +6,22 @@ class Converter:
         pass
 
     @staticmethod
-    def to_harmonic(self, input: np.ndarray):
+    def to_harmonic(input: np.ndarray):
         """转换成齐次坐标形式"""
         M = input.shape[0]
         input = np.concatenate([input, np.ones([M, 1])], axis=1)
         return input
 
     @staticmethod
-    def proj_3to2(self, xyz: np.ndarray, intrinsic, extrinsic):
+    def proj_3to2(xyz: np.ndarray, extrinsic, intrinsic):
         """
-        不懂原理, 直接照抄
+        将3D点云投影到2D平面上
         :param xyz: shape: [M, 3]
         :param extrinsic: shape: [3, 3]
         :param intrinsic: shape: [4, 4]
         """
-        xyz = self.to_harmonic(xyz)
+        # 使用静态方法的调用
+        xyz = Converter.to_harmonic(xyz)
         xyz = np.linalg.inv(extrinsic) @ xyz.T
         uvd = intrinsic @ xyz[0:3]
         uvd = uvd.T
@@ -28,8 +29,8 @@ class Converter:
         return uv, d
 
     @staticmethod
-    def proj_pc2dpt(self, point_cloud: np.ndarray, extrinsic, intrinsic, h, w):
-        uv, dpt = self.proj_3to2(point_cloud, intrinsic, extrinsic)
+    def proj_pc2dpt(point_cloud: np.ndarray, extrinsic, intrinsic, h, w):
+        uv, dpt = Converter.proj_3to2(point_cloud, extrinsic, intrinsic)
         mask_w = (uv[:, 0] < w) & (uv[:, 0] >= 0)
         mask_h = (uv[:, 1] < h) & (uv[:, 1] >= 0)
         # mask mask off the back-project points

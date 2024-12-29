@@ -24,7 +24,7 @@ def _init_modules(args, accelerator_project_config, processor_class, optimizer_c
         log_with=args.report_to,
         project_config=accelerator_project_config,
     )
-    processor = processor_class(args.pretrained_model, args.revision)
+    processor = processor_class(args.pretrained_model, args.revision, args.control_model)
     optimizer = optimizer_class(
         processor.unet.parameters(),
         lr=args.learning_rate,
@@ -73,7 +73,9 @@ def main(args):
     train_dataset.reinitialize()
     train_dataset.set_transform(img_transform(args), dpt_transform(args))
     train_dataset.set_tokenizer(tokenizer)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    train_dataloader = DataLoader(
+        train_dataset, args.batch_size, True, num_workers=args.num_workers, collate_fn=train_dataset.collate_fn, pin_memory=True
+    )
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -106,6 +108,7 @@ def main(args):
 
         if is_xformers_available():
             import xformers
+            from packaging import version
 
             xformers_version = version.parse(xformers.__version__)
             if xformers_version == version.parse("0.0.16"):
@@ -133,8 +136,12 @@ def main(args):
     for epoch in range(first_epoch, args.train_epochs):
         for step, batch in enumerate(train_dataloader):
             with img_accelerator.accumulate(img_processor.unet), dpt_accelerator.accumulate(dpt_processor.unet):
-                img_noise, img_noise_pred = img_processor(batch["img"], batch["inputs_ids"])
-                dpt_noise, dpt_noise_pred = dpt_processor(batch["dpt"])
+                img_noise, img_noise_pred = img_processor(
+                    batch["img"].to(img_accelerator.device), batch["img_inputs_ids"].to(img_accelerator.device)
+                )
+                dpt_noise, dpt_noise_pred = dpt_processor(
+                    batch["dpt"].to(dpt_accelerator.device), batch["dpt_inputs_ids"].to(dpt_accelerator.device)
+                )
 
                 # 计算损失与优化部分
                 img_loss = F.mse_loss(img_noise_pred.float(), img_noise.float(), reduction="mean")

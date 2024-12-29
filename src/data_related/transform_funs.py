@@ -67,7 +67,7 @@ def _resize_img(img, resolution):
 def dpt_transform(args):
     def transform(pc):
         # 投影成深度图
-        dpt = Converter.proj_pc2dpt(pc, extrinsic=np.eye(4), intrinsic=np.eye(4), h=args.resolution, w=args.resolution)
+        dpt = Converter.proj_pc2dpt(pc, extrinsic=np.eye(4), intrinsic=np.eye(3), h=args.resolution, w=args.resolution)
         # 对深度图的大小进行调整
         dpt = np.array(_resize_img(_HWC3(_depth_normalize(dpt)), args.resolution))
         # 转换成 Tensor 并进行维度调整

@@ -1,3 +1,5 @@
+from typing import Optional
+
 from torch import nn
 from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel, DDPMScheduler
 from transformers import PretrainedConfig
@@ -25,14 +27,20 @@ def import_model_class_from_pretrained_model(pretrained_model: str, revision: st
 
 
 class BaseProcessor(nn.Module):
-    def __init__(self, pretrained_model: str, revision: str):
+    def __init__(self, pretrained_model: str, revision: str, controlnet_model: Optional[str] = None):
         super().__init__()
         text_encoder_cls = import_model_class_from_pretrained_model(pretrained_model, revision)
 
         self.vae = AutoencoderKL.from_pretrained(pretrained_model, subfolder="vae", revision=revision)
         self.unet = UNet2DConditionModel.from_pretrained(pretrained_model, subfolder="unet", revision=revision)
         self.text_encoder = text_encoder_cls.from_pretrained(pretrained_model, subfolder="text_encoder")
-        self.controlnet = ControlNetModel.from_pretrained(pretrained_model, subfolder="controlnet", revision=revision)
+
+        self.controlnet = (
+            ControlNetModel.from_pretrained(controlnet_model, revision=revision)
+            if controlnet_model
+            else ControlNetModel.from_unet(self.unet)
+        )
+
         self.noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model, subfolder="scheduler", revision=revision)
 
         self.vae.requires_grad_(False)

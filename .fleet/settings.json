@@ -1,6 +1,6 @@
 {
     "excluded": [],
-    "editor.formatOnSave": true,
+    "editor.formatOnSave": false,
     "plugins": [
         {
             "type": "add",

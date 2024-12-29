@@ -76,7 +76,7 @@ def image_grid(imgs, rows, cols):
 
 
 def log_validation(
-        vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step, is_final_validation=False
+    vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step, is_final_validation=False
 ):
     logger.info("Running validation... ")
 
@@ -119,8 +119,7 @@ def log_validation(
         validation_images = args.validation_image
         validation_prompts = args.validation_prompt * len(args.validation_image)
     else:
-        raise ValueError(
-            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`")
+        raise ValueError("number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`")
 
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
@@ -132,13 +131,11 @@ def log_validation(
 
         for _ in range(args.num_validation_images):
             with inference_ctx:
-                image = \
-                pipeline(validation_prompt, validation_image, num_inference_steps=20, generator=generator).images[0]
+                image = pipeline(validation_prompt, validation_image, num_inference_steps=20, generator=generator).images[0]
 
             images.append(image)
 
-        image_logs.append(
-            {"validation_image": validation_image, "images": images, "validation_prompt": validation_prompt})
+        image_logs.append({"validation_image": validation_image, "images": images, "validation_prompt": validation_prompt})
 
     tracker_key = "test" if is_final_validation else "validation"
     for tracker in accelerator.trackers:
@@ -303,8 +300,7 @@ def parse_args(input_args=None):
             "The resolution for input images, all the images in the train/validation dataset will be resized to this resolution"
         ),
     )
-    parser.add_argument("--train_batch_size", type=int, default=4,
-                        help="Batch size (per device) for the training dataloader.")
+    parser.add_argument("--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader.")
     parser.add_argument("--num_train_epochs", type=int, default=1)
     parser.add_argument(
         "--max_train_steps",
@@ -372,8 +368,7 @@ def parse_args(input_args=None):
             ' "constant", "constant_with_warmup"]'
         ),
     )
-    parser.add_argument("--lr_warmup_steps", type=int, default=500,
-                        help="Number of steps for the warmup in the lr scheduler.")
+    parser.add_argument("--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler.")
     parser.add_argument(
         "--lr_num_cycles",
         type=int,
@@ -381,8 +376,7 @@ def parse_args(input_args=None):
         help="Number of hard resets of the lr in cosine_with_restarts scheduler.",
     )
     parser.add_argument("--lr_power", type=float, default=1.0, help="Power factor of the polynomial scheduler.")
-    parser.add_argument("--use_8bit_adam", action="store_true",
-                        help="Whether or not to use 8-bit Adam from bitsandbytes.")
+    parser.add_argument("--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes.")
     parser.add_argument(
         "--dataloader_num_workers",
         type=int,
@@ -571,11 +565,11 @@ def parse_args(input_args=None):
         raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
 
     if (
-            args.validation_image is not None
-            and args.validation_prompt is not None
-            and len(args.validation_image) != 1
-            and len(args.validation_prompt) != 1
-            and len(args.validation_image) != len(args.validation_prompt)
+        args.validation_image is not None
+        and args.validation_prompt is not None
+        and len(args.validation_image) != 1
+        and len(args.validation_prompt) != 1
+        and len(args.validation_image) != len(args.validation_prompt)
     ):
         raise ValueError(
             "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
@@ -663,8 +657,7 @@ def make_train_dataset(args, tokenizer, accelerator):
                 # take a random caption if there are multiple
                 captions.append(random.choice(caption) if is_train else caption[0])
             else:
-                raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings.")
+                raise ValueError(f"Caption column `{caption_column}` should contain either strings or lists of strings.")
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
         )
@@ -872,8 +865,7 @@ def main(args):
     )
 
     if unwrap_model(controlnet).dtype != torch.float32:
-        raise ValueError(
-            f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}")
+        raise ValueError(f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}")
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -882,7 +874,7 @@ def main(args):
 
     if args.scale_lr:
         args.learning_rate = (
-                args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
     # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
@@ -994,8 +986,7 @@ def main(args):
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
+            accelerator.print(f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
@@ -1033,8 +1024,7 @@ def main(args):
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
-                noisy_latents = noise_scheduler.add_noise(latents.float(), noise.float(), timesteps).to(
-                    dtype=weight_dtype)
+                noisy_latents = noise_scheduler.add_noise(latents.float(), noise.float(), timesteps).to(dtype=weight_dtype)
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
@@ -1054,8 +1044,7 @@ def main(args):
                     noisy_latents,
                     timesteps,
                     encoder_hidden_states=encoder_hidden_states,
-                    down_block_additional_residuals=[sample.to(dtype=weight_dtype) for sample in
-                                                     down_block_res_samples],
+                    down_block_additional_residuals=[sample.to(dtype=weight_dtype) for sample in down_block_res_samples],
                     mid_block_additional_residual=mid_block_res_sample.to(dtype=weight_dtype),
                     return_dict=False,
                 )[0]

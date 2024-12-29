@@ -169,15 +169,12 @@ if __name__ == "__main__":
         transforms.Normalize([0.5], [0.5]),
     ])
 
-
-    def transform_images(examples: Union[List[PIL.Image.Image], PIL.Image.Image]) -> Union[
-        List[torch.Tensor], torch.Tensor]:
+    def transform_images(examples: Union[List[PIL.Image.Image], PIL.Image.Image]) -> Union[List[torch.Tensor], torch.Tensor]:
         if isinstance(examples, list):
             images = [augmentations(image.convert("RGB")) for image in examples]
         elif isinstance(examples, PIL.Image.Image):
             images = augmentations(examples.convert("RGB"))
         return images
-
 
     dataset = StableDiffusionDataset("/datasets/OPV2V/train")
     dataset.reinitialize()
@@ -256,22 +253,18 @@ if __name__ == "__main__":
         transforms.Normalize([0.5], [0.5]),
     ])
 
-
-    def transform_images(examples: Union[List[PIL.Image.Image], PIL.Image.Image]) -> Union[
-        List[torch.Tensor], torch.Tensor]:
+    def transform_images(examples: Union[List[PIL.Image.Image], PIL.Image.Image]) -> Union[List[torch.Tensor], torch.Tensor]:
         if isinstance(examples, list):
             images = [augmentations(image.convert("RGB")) for image in examples]
         elif isinstance(examples, PIL.Image.Image):
             images = augmentations(examples.convert("RGB"))
         return images
 
-
     dataset = StableDiffusionDataset(args.root_dir)
     dataset.reinitialize()
     dataset.SetTransform(transform_images)
     # TODO: 真运行的时候记得修改这个 num_workers
-    data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=1,
-                             collate_fn=dataset.collate_fn)
+    data_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=1, collate_fn=dataset.collate_fn)
     original_stdout = sys.stdout
     # Image 部分
     logger.important("加载 Img 部分模型")
@@ -494,7 +487,7 @@ def nms(x, t, s):
 def make_noise_disk(H, W, C, F):
     noise = np.random.uniform(low=0, high=1, size=((H // F) + 2, (W // F) + 2, C))
     noise = cv2.resize(noise, (W + 2 * F, H + 2 * F), interpolation=cv2.INTER_CUBIC)
-    noise = noise[F: F + H, F: F + W]
+    noise = noise[F : F + H, F : F + W]
     noise -= np.min(noise)
     noise /= np.max(noise)
     if C == 1:

@@ -9,7 +9,6 @@ import open3d as o3d
 import numpy as np
 import os
 import torch
-from torch import Tensor
 
 
 def _load_camera_data(camera_files: List[Path], preLoad=True):
@@ -68,12 +67,13 @@ class StableDiffusionDataset(Dataset):
         self.scenario_database: List[Dict[str, Dict[str, PFTimestampData]]] = []
         self.flattened_database = []
         # 输入图片的 0, 1, 2, 3 序号照片的提示词 TODO: 可能需要不正确需要仔细校对一下
-        self.captions = [
+        self.img_captions = [
             "A front view of a moving vehicle captured by an overhead camera",
             "A rear view taken by an overhead camera of a moving vehicle",
             "A left view taken by a camera on top of a moving vehicle",
             "A right view taken by a camera on top of a moving vehicle",
         ]
+        self.dpt_captions = [""]
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -107,21 +107,29 @@ class StableDiffusionDataset(Dataset):
         :return: The dictionary contains loaded yaml params and lidar data for each cav.
         """
         pathes = self.flattened_database[idx]
-        return CAVData(camera_data=_load_camera_data(pathes.cameras),
-                       lidar_np=_pcd_to_np(pathes.lidar, need_color=False))
+        return CAVData(camera_data=_load_camera_data(pathes.cameras), lidar_np=_pcd_to_np(pathes.lidar, need_color=False))
 
     def __len__(self):
         return len(self.flattened_database)
 
     def collate_fn(self, batches: List[CAVData]):
-        camera_data, lidar_np, inputs_ids = [], [], []
+        camera_data, lidar_np, img_inputs_ids, dpt_inputs_ids = [], [], [], []
         for batch in batches:
             camera_data.append(torch.stack(self.img_transform(batch.camera_data)))
             lidar_np.append(self.dpt_transform(batch.lidar_np))
             # 给图片使用的提示词信息
-            inputs_ids.append(
+            img_inputs_ids.append(
                 self.tokenizer(
-                    self.captions,
+                    self.img_captions,
+                    max_length=self.tokenizer.model_max_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                ).input_ids
+            )
+            dpt_inputs_ids.append(
+                self.tokenizer(
+                    self.dpt_captions,
                     max_length=self.tokenizer.model_max_length,
                     padding="max_length",
                     truncation=True,
@@ -132,7 +140,8 @@ class StableDiffusionDataset(Dataset):
             # camera shape: (batch, 4, 3, W, H), 这个 4 是每个车有四个相机
             "img": torch.stack(camera_data),
             "dpt": torch.stack(lidar_np),
-            "inputs_ids": torch.stack(inputs_ids),
+            "img_inputs_ids": torch.stack(img_inputs_ids),
+            "dpt_inputs_ids": torch.stack(dpt_inputs_ids),
         }
 
     def set_transform(self, img_transform, dpt_transform):

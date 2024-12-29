@@ -93,8 +93,7 @@ def log_validation(controlnet, args, accelerator, weight_dtype, step, is_final_v
         validation_images = args.validation_image
         validation_prompts = args.validation_prompt * len(args.validation_image)
     else:
-        raise ValueError(
-            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`")
+        raise ValueError("number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`")
 
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast(accelerator.device.type)
@@ -112,8 +111,7 @@ def log_validation(controlnet, args, accelerator, weight_dtype, step, is_final_v
 
             images.append(image)
 
-        image_logs.append(
-            {"validation_image": validation_image, "images": images, "validation_prompt": validation_prompt})
+        image_logs.append({"validation_image": validation_image, "images": images, "validation_prompt": validation_prompt})
 
     tracker_key = "test" if is_final_validation else "validation"
     for tracker in accelerator.trackers:
@@ -123,8 +121,7 @@ def log_validation(controlnet, args, accelerator, weight_dtype, step, is_final_v
                 validation_prompt = log["validation_prompt"]
                 validation_image = log["validation_image"]
 
-                tracker.writer.add_image("Controlnet conditioning", np.asarray([validation_image]), step,
-                                         dataformats="NHWC")
+                tracker.writer.add_image("Controlnet conditioning", np.asarray([validation_image]), step, dataformats="NHWC")
 
                 formatted_images = []
                 for image in images:
@@ -176,7 +173,7 @@ def load_text_encoders(class_one, class_two, class_three):
 
 # Copied from dreambooth sd3 example
 def import_model_class_from_model_name_or_path(
-        pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
+    pretrained_model_name_or_path: str, revision: str, subfolder: str = "text_encoder"
 ):
     text_encoder_config = PretrainedConfig.from_pretrained(
         pretrained_model_name_or_path, subfolder=subfolder, revision=revision
@@ -303,8 +300,7 @@ def make_train_dataset(args, tokenizer_one, tokenizer_two, tokenizer_three, acce
                 # take a random caption if there are multiple
                 captions.append(random.choice(caption) if is_train else caption[0])
             else:
-                raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings.")
+                raise ValueError(f"Caption column `{caption_column}` should contain either strings or lists of strings.")
         return captions
 
     image_transforms = transforms.Compose([
@@ -362,12 +358,12 @@ def collate_fn(examples):
 
 # Copied from dreambooth sd3 example
 def _encode_prompt_with_t5(
-        text_encoder,
-        tokenizer,
-        max_sequence_length,
-        prompt=None,
-        num_images_per_prompt=1,
-        device=None,
+    text_encoder,
+    tokenizer,
+    max_sequence_length,
+    prompt=None,
+    num_images_per_prompt=1,
+    device=None,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -397,11 +393,11 @@ def _encode_prompt_with_t5(
 
 # Copied from dreambooth sd3 example
 def _encode_prompt_with_clip(
-        text_encoder,
-        tokenizer,
-        prompt: str,
-        device=None,
-        num_images_per_prompt: int = 1,
+    text_encoder,
+    tokenizer,
+    prompt: str,
+    device=None,
+    num_images_per_prompt: int = 1,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
     batch_size = len(prompt)
@@ -431,12 +427,12 @@ def _encode_prompt_with_clip(
 
 # Copied from dreambooth sd3 example
 def encode_prompt(
-        text_encoders,
-        tokenizers,
-        prompt: str,
-        max_sequence_length,
-        device=None,
-        num_images_per_prompt: int = 1,
+    text_encoders,
+    tokenizers,
+    prompt: str,
+    max_sequence_length,
+    device=None,
+    num_images_per_prompt: int = 1,
 ):
     prompt = [prompt] if isinstance(prompt, str) else prompt
 
@@ -564,8 +560,7 @@ def main(args):
     )
 
     # Load scheduler and models
-    noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path,
-                                                                      subfolder="scheduler")
+    noise_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     noise_scheduler_copy = copy.deepcopy(noise_scheduler)
     text_encoder_one, text_encoder_two, text_encoder_three = load_text_encoders(
         text_encoder_cls_one, text_encoder_cls_two, text_encoder_cls_three
@@ -640,8 +635,7 @@ def main(args):
     )
 
     if unwrap_model(controlnet).dtype != torch.float32:
-        raise ValueError(
-            f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}")
+        raise ValueError(f"Controlnet loaded as datatype {unwrap_model(controlnet).dtype}. {low_precision_error_string}")
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
@@ -650,7 +644,7 @@ def main(args):
 
     if args.scale_lr:
         args.learning_rate = (
-                args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
     # Use 8-bit Adam for lower memory usage or to fine-tune the model in 16GB GPUs
@@ -700,8 +694,7 @@ def main(args):
     def compute_text_embeddings(batch, text_encoders, tokenizers):
         with torch.no_grad():
             prompt = batch["prompts"]
-            prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt,
-                                                                args.max_sequence_length)
+            prompt_embeds, pooled_prompt_embeds = encode_prompt(text_encoders, tokenizers, prompt, args.max_sequence_length)
             prompt_embeds = prompt_embeds.to(accelerator.device)
             pooled_prompt_embeds = pooled_prompt_embeds.to(accelerator.device)
         return {"prompt_embeds": prompt_embeds, "pooled_prompt_embeds": pooled_prompt_embeds}
@@ -801,8 +794,7 @@ def main(args):
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
+            accelerator.print(f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
