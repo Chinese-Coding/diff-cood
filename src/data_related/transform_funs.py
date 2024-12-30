@@ -7,10 +7,10 @@ from torchvision import transforms
 from data_related.converter import Converter
 
 
-def img_transform(args):
+def img_transform(resolution):
     augmentations = transforms.Compose([
-        transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-        transforms.CenterCrop(args.resolution),
+        transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.CenterCrop(resolution),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize([0.5], [0.5]),
@@ -65,12 +65,12 @@ def _resize_img(img, resolution):
     return img
 
 
-def dpt_transform(args):
+def dpt_transform(resolution):
     def transform(pc):
         # 投影成深度图
-        dpt = Converter.proj_pc2dpt(pc, extrinsic=np.eye(4), intrinsic=np.eye(3), h=args.resolution, w=args.resolution)
+        dpt = Converter.proj_pc2dpt(pc, extrinsic=np.eye(4), intrinsic=np.eye(3), h=resolution, w=resolution)
         # 对深度图的大小进行调整
-        dpt = np.array(_resize_img(_HWC3(_depth_normalize(dpt)), args.resolution))
+        dpt = np.array(_resize_img(_HWC3(_depth_normalize(dpt)), resolution))
         # 转换成 Tensor 并进行维度调整
         dpt = torch.from_numpy(dpt.copy()).float() / 255.0
         dpt = einops.rearrange(dpt, "h w c -> c h w").clone()

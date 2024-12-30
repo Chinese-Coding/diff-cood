@@ -18,7 +18,7 @@ train_epochs: 1
 resolution: 512
 num_workers: 4
 checkpointing_steps: 500
-checkpoints_total_limit: 100
+checkpoints_total_limit: 10 # 这里还是设置的小一点为妙, 不然太占存储空间了
 gradient_checkpointing: true
 allow_tf32: true
 

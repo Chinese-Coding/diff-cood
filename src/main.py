@@ -44,7 +44,7 @@ def _init_datasloader(args):
     )
     train_dataset = StableDiffusionDataset(args.root_dir)
     train_dataset.reinitialize()
-    train_dataset.set_transform(img_transform(args), dpt_transform(args))
+    train_dataset.set_transform(img_transform(args.resolution), dpt_transform(args.resolution))
     train_dataset.set_tokenizer(tokenizer)
     train_dataloader = DataLoader(
         train_dataset, args.batch_size, True, num_workers=args.num_workers, collate_fn=train_dataset.collate_fn, pin_memory=True
