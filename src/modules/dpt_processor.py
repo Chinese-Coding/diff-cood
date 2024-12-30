@@ -1,5 +1,6 @@
-from modules.base_processor import BaseProcessor
 import torch
+
+from modules.base_processor import BaseProcessor
 
 
 class DptProcessor(BaseProcessor):

@@ -1,9 +1,10 @@
-from torchvision import transforms
-from data_related.converter import Converter
-import numpy as np
-import einops
-import torch
 import cv2
+import einops
+import numpy as np
+import torch
+from torchvision import transforms
+
+from data_related.converter import Converter
 
 
 def img_transform(args):

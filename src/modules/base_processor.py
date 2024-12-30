@@ -1,9 +1,9 @@
 from typing import Optional
 
-from torch import nn
-from diffusers import AutoencoderKL, UNet2DConditionModel, ControlNetModel, DDPMScheduler
-from transformers import PretrainedConfig
 import torch
+from diffusers import AutoencoderKL, ControlNetModel, DDPMScheduler, UNet2DConditionModel
+from torch import nn
+from transformers import PretrainedConfig
 
 
 def import_model_class_from_pretrained_model(pretrained_model: str, revision: str):

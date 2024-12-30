@@ -1,7 +1,8 @@
-from torch import Tensor
 import einops
-from modules.base_processor import BaseProcessor
 import torch
+from torch import Tensor
+
+from modules.base_processor import BaseProcessor
 
 
 class ImgProcessor(BaseProcessor):

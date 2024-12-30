@@ -1,8 +1,9 @@
-from pydantic import ConfigDict, BaseModel, SkipValidation
+from pathlib import Path
 from typing import List
+
 import numpy as np
 from PIL import Image
-from pathlib import Path
+from pydantic import BaseModel, ConfigDict, SkipValidation
 
 
 class CAVData(BaseModel):

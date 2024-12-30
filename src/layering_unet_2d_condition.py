@@ -1,9 +1,9 @@
-from typing import override, Union, Optional, Dict, Any, Tuple
+from typing import Any, Dict, Optional, Tuple, Union, override
 
 import diffusers
 import torch
-from diffusers.utils import USE_PEFT_BACKEND, unscale_lora_layers, scale_lora_layers
 from diffusers import StableDiffusionXLControlNetPipeline
+from diffusers.utils import USE_PEFT_BACKEND, scale_lora_layers, unscale_lora_layers
 
 
 class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):

@@ -1,20 +1,22 @@
-from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
-from pathlib import Path
-from accelerate.utils import ProjectConfiguration
-from accelerate import Accelerator
-import torch
-from diffusers.optimization import get_scheduler
-from data_related.stable_diffusion_dataset import StableDiffusionDataset
-from data_related.transform_funs import dpt_transform, img_transform
-from accelerate.logging import get_logger
-import torch.nn.functional as F
 import math
-from tqdm.auto import tqdm
-from modules.dpt_processor import DptProcessor
-from modules.img_processor import ImgProcessor
 import os
 import shutil
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+from accelerate import Accelerator
+from accelerate.logging import get_logger
+from accelerate.utils import ProjectConfiguration
+from diffusers.optimization import get_scheduler
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer
+
+from data_related.stable_diffusion_dataset import StableDiffusionDataset
+from data_related.transform_funs import dpt_transform, img_transform
+from modules.dpt_processor import DptProcessor
+from modules.img_processor import ImgProcessor
 
 logger = get_logger(__name__)
 
@@ -257,6 +259,6 @@ def main(args):
 
 if __name__ == "__main__":
     from omegaconf import OmegaConf
-    
+
     args = OmegaConf.load("config.yaml")
     main(args)
