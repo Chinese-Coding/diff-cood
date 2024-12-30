@@ -9,9 +9,9 @@ from data_related.converter import Converter
 
 def img_transform(resolution):
     augmentations = transforms.Compose([
+        # TODO: 又 resize 又 centercrop 感觉这两步有些重复了
         transforms.Resize(resolution, interpolation=transforms.InterpolationMode.BILINEAR),
         transforms.CenterCrop(resolution),
-        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize([0.5], [0.5]),
     ])
@@ -40,27 +40,32 @@ def _HWC3(x):
         x = x[:, :, None]
     assert x.ndim == 3
     H, W, C = x.shape
-    assert C == 1 or C == 3 or C == 4
-    if C == 3:
-        return x
-    if C == 1:
-        return np.concatenate([x, x, x], axis=2)
-    if C == 4:
-        color = x[:, :, 0:3].astype(np.float32)
-        alpha = x[:, :, 3:4].astype(np.float32) / 255.0
-        y = color * alpha + 255.0 * (1.0 - alpha)
-        y = y.clip(0, 255).astype(np.uint8)
-        return y
+    match C:
+        case 3:
+            return x
+        case 1:
+            return np.concatenate([x, x, x], axis=2)
+        case 4:
+            color, alpha = x[:, :, 0:3].astype(np.float32), x[:, :, 3:4].astype(np.float32) / 255.0
+            y = color * alpha + 255.0 * (1.0 - alpha)
+            return y.clip(0, 255).astype(np.uint8)
+        case _:
+            NotImplementedError("暂未实现对于其他通道数图像的转换")
 
 
 def _resize_img(img, resolution):
     H, W, C = img.shape
     H, W = float(H), float(W)
-    k = float(resolution) / min(H, W)
+    k = float(resolution) / min(H, W)  # 计算缩放因子 `k`
     H, W = int(np.round((H * k) / 64.0)) * 64, int(np.round((W * k) / 64.0)) * 64
     # my adding for kitti process
     if W > 2.5 * H:
         W = int(2.5 * H)
+    """
+    `interpolation` 插值方法解析:
+    如果 k > 1 (即图像被放大), 则使用 cv2.INTER_LANCZOS4（Lanczos插值), 这种方法适用于放大图像时能够保留更多细节.
+    如果 k <= 1 (即图像被缩小), 则使用 cv2.INTER_AREA (面积插值), 这种方法在缩小图像时通常效果较好.
+    """
     img = cv2.resize(img, (W, H), interpolation=cv2.INTER_LANCZOS4 if k > 1 else cv2.INTER_AREA)
     return img
 

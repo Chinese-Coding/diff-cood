@@ -61,5 +61,5 @@ class BaseProcessor(nn.Module):
         self.controlnet.to(device, dtype)
         self.text_encoder.to(device, dtype)
 
-    def set_weight_type(self, weight_dtype: torch.dtype):
-        self.weight_type = weight_dtype
+    def set_weight_type(self, weight_type: torch.dtype):
+        self.weight_type = weight_type
