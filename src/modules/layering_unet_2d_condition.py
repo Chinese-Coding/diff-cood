@@ -3,10 +3,12 @@ from typing import Any, Dict, Optional, Tuple, Union
 import diffusers
 import torch
 from diffusers.utils import USE_PEFT_BACKEND, scale_lora_layers, unscale_lora_layers
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
-class LayingUNetParams(BaseModel):
+class LayeringUNetParams(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     sample: torch.Tensor
     timestep: Union[torch.Tensor, float, int]
     encoder_hidden_states: torch.Tensor
@@ -27,11 +29,22 @@ class LayingUNetParams(BaseModel):
     is_controlnet: bool = False
     is_adapter: bool = False
     lora_scale: float = 1.0
-    down_block_res_samples: Optional[torch.Tensor] = None
+    down_block_res_samples: Optional[list] = None
+
+    def to(self, device: torch.device):
+        for attr, value in self.__dict__.items():
+            # 将所有 torch.Tensor 类型的属性搬运到指定设备
+            if isinstance(value, torch.Tensor):
+                setattr(self, attr, value.to(device))
+            # 对于可能包含多个 torch.Tensor 的类型（如 Tuple 或 Dict），递归搬运
+            elif isinstance(value, (tuple, list)):
+                setattr(self, attr, type(value)(v.to(device) if isinstance(v, torch.Tensor) else v for v in value))
+            elif isinstance(value, dict):
+                setattr(self, attr, {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in value.items()})
 
 
 class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
-    def forward_pre(self, params: LayingUNetParams):
+    def forward_pre(self, params: LayeringUNetParams):
         default_overall_up_factor = 2**self.num_upsamplers
         sample = params.sample
         for dim in sample.shape[-2:]:
@@ -110,7 +123,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
 
         return params
 
-    def forward_down(self, params: LayingUNetParams) -> Tuple:
+    def forward_down(self, params: LayeringUNetParams):
         sample = params.sample
         # 2. pre-process
         sample = self.conv_in(sample)
@@ -144,7 +157,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
             params.down_block_res_samples = down_block_res_samples
         return params
 
-    def forward_control(self, params: LayingUNetParams):
+    def forward_control(self, params: LayeringUNetParams):
         if params.is_controlnet:
             new_down_block_res_samples = ()
 
@@ -157,7 +170,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
             params.down_block_res_samples = new_down_block_res_samples
         return params
 
-    def forward_middle(self, params: LayingUNetParams):
+    def forward_middle(self, params: LayeringUNetParams):
         sample = params.sample
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
@@ -184,7 +197,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
         params.sample = sample
         return params
 
-    def forward_up(self, params: LayingUNetParams):
+    def forward_up(self, params: LayeringUNetParams):
         sample = params.sample
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1

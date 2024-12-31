@@ -5,6 +5,7 @@ output_dir: /home/zfq/Desktop/logs/controlnet
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
 resume_from_checkpoint: null
+layering: True # 是否使用 `LayeringUNet2dConditionModel`
 
 # 训练有关的配置文件
 use_8bit_adam: true

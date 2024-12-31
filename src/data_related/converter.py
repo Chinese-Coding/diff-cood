@@ -33,7 +33,7 @@ class Converter:
         return uv, dpt
 
     @staticmethod
-    def proj_pc2dpt(pc: np.ndarray, extrinsic, intrinsic, h, w, count=Optional[list[float]]):
+    def proj_pc2dpt(pc: np.ndarray, extrinsic, intrinsic, h, w, count: Optional[list[float]] = None):
         """
         将点云投影为深度图 (注释以及代码中 M 指的是点的个数)
         :param pc: shape: [M, 3]
