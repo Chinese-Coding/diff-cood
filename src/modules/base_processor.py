@@ -5,7 +5,7 @@ from diffusers import AutoencoderKL, ControlNetModel, DDPMScheduler, UNet2DCondi
 from torch import nn
 from transformers import PretrainedConfig
 
-from modules.layering_unet_2d_condition import LayeringUNet2dConditionModel
+from modules.layering_unet_2d_condition import LayeringUNet2DCModel, LayeringUNet2DCParams
 
 
 def import_model_class_from_pretrained_model(pretrained_model: str, revision: str):
@@ -32,7 +32,7 @@ class BaseProcessor(nn.Module):
     def __init__(self, pretrained_model: str, revision: str, controlnet_model: Optional[str] = None, layering=False):
         super().__init__()
         text_encoder_cls = import_model_class_from_pretrained_model(pretrained_model, revision)
-        unet_class = LayeringUNet2dConditionModel if layering else UNet2DConditionModel
+        unet_class = LayeringUNet2DCModel if layering else UNet2DConditionModel
 
         self.vae = AutoencoderKL.from_pretrained(pretrained_model, subfolder="vae", revision=revision)
         self.unet = unet_class.from_pretrained(pretrained_model, subfolder="unet", revision=revision)
@@ -73,7 +73,10 @@ class BaseProcessor(nn.Module):
         self.weight_dtype = weight_dtype
 
     @torch.no_grad()
-    def prepare(self, x: torch.Tensor, inputs_ids: torch.Tensor):
+    def prepare(self, x: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True):
+        """
+        :param all_return_tuple: 是否将全部返回值以 Tuple 的形式返回
+        """
         latents = self.vae.encode(x).latent_dist.sample()
         latents = latents * self.vae.config.scaling_factor
         noise = torch.randn_like(latents)
@@ -81,4 +84,9 @@ class BaseProcessor(nn.Module):
         timestep = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
         noisy_latents = self.noise_scheduler.add_noise(latents.float(), noise.float(), timestep).to(dtype=self.weight_dtype)
         encoder_hidden_states = self.text_encoder(inputs_ids, return_dict=False)[0]
-        return noise, noisy_latents, timestep, encoder_hidden_states
+        if all_return_tuple:
+            return noise, noisy_latents, timestep, encoder_hidden_states
+        else:
+            return noise, LayeringUNet2DCParams(
+                sample=noisy_latents, timestep=timestep, encoder_hidden_states=encoder_hidden_states
+            )

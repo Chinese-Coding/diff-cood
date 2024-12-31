@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import diffusers
 import torch
@@ -6,7 +6,7 @@ from diffusers.utils import USE_PEFT_BACKEND, scale_lora_layers, unscale_lora_la
 from pydantic import BaseModel, ConfigDict
 
 
-class LayeringUNetParams(BaseModel):
+class LayeringUNet2DCParams(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     sample: torch.Tensor
@@ -17,13 +17,13 @@ class LayeringUNetParams(BaseModel):
     attention_mask: Optional[torch.Tensor] = None
     cross_attention_kwargs: Optional[Dict[str, Any]] = None
     added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None
-    down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None
+    down_block_additional_residuals: Optional[List[torch.Tensor]] = None  # 这里从 `Tuple` 变成了 `List`
     mid_block_additional_residual: Optional[torch.Tensor] = None
     down_intrablock_additional_residuals: Optional[Tuple[torch.Tensor]] = None
     encoder_attention_mask: Optional[torch.Tensor] = None
     retrun_dict: bool = True
 
-    # 这些参数是需要在这个给不同的 forward 方法中进行传递的中间参数, 上面那些是原本 forward 方法自带的参数
+    # 这些参数是需要在这个给不同的 forward 方法中进行传递的中间参数, 原本 forward 方法自带的参数放在了上面
     forward_upsample_size: bool = False
     emb: Optional = None
     is_controlnet: bool = False
@@ -43,8 +43,10 @@ class LayeringUNetParams(BaseModel):
                 setattr(self, attr, {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in value.items()})
 
 
-class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
-    def forward_pre(self, params: LayeringUNetParams):
+class LayeringUNet2DCModel(diffusers.UNet2DConditionModel):
+    """该类名中的 `UNet2DC` 是 `UNet2DCondition` 的简写, 上面两个 `Params` 同理"""
+
+    def forward_pre(self, params: LayeringUNet2DCParams):
         default_overall_up_factor = 2**self.num_upsamplers
         sample = params.sample
         for dim in sample.shape[-2:]:
@@ -123,7 +125,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
 
         return params
 
-    def forward_down(self, params: LayeringUNetParams):
+    def forward_down(self, params: LayeringUNet2DCParams):
         sample = params.sample
         # 2. pre-process
         sample = self.conv_in(sample)
@@ -154,10 +156,12 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
                 if params.is_adapter and len(params.down_intrablock_additional_residuals) > 0:
                     sample += params.down_intrablock_additional_residuals.pop(0)
             down_block_res_samples += res_samples
-            params.down_block_res_samples = down_block_res_samples
+        params.sample = sample
+        params.down_block_res_samples = down_block_res_samples
         return params
 
-    def forward_control(self, params: LayeringUNetParams):
+    def forward_control(self, params: LayeringUNet2DCParams):
+        """尽管说, IDE 给提示说这个方法, 可以变成函数, 但是为了统一写法这里就不提取出函数了"""
         if params.is_controlnet:
             new_down_block_res_samples = ()
 
@@ -170,7 +174,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
             params.down_block_res_samples = new_down_block_res_samples
         return params
 
-    def forward_middle(self, params: LayeringUNetParams):
+    def forward_middle(self, params: LayeringUNet2DCParams):
         sample = params.sample
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
@@ -197,20 +201,17 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
         params.sample = sample
         return params
 
-    def forward_up(self, params: LayeringUNetParams):
+    def forward_up(self, params: LayeringUNet2DCParams):
         sample = params.sample
+        down_block_res_samples = params.down_block_res_samples  # 这里加一个 copy 应该会更合适一些的
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
-            res_samples = params.down_block_res_samples[-len(upsample_block.resnets) :]
-            down_block_res_samples = params.down_block_res_samples[: -len(upsample_block.resnets)]
-
-            # if we have not reached the final block and need to forward the upsample size, we do it here
-
+            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
             upsample_size = (
                 down_block_res_samples[-1].shape[2:] if not is_final_block and params.forward_upsample_size else None
             )
-
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
                 sample = upsample_block(
                     hidden_states=sample,
@@ -227,7 +228,7 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
                     hidden_states=sample,
                     temb=params.emb,
                     res_hidden_states_tuple=res_samples,
-                    upsample_size=params.upsample_size,
+                    upsample_size=upsample_size,
                 )
 
         # 6. post-process
@@ -239,5 +240,5 @@ class LayeringUNet2dConditionModel(diffusers.UNet2DConditionModel):
         if USE_PEFT_BACKEND:
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, params.lora_scale)
-        params.sample = sample
+        params.sample, params.down_block_res_samples = sample, params.down_block_res_samples
         return params  # 为了和前面一系列的函数的返回值同一, 这里还是选择返回 `params` (虽然这是最后一层)

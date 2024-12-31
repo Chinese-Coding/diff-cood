@@ -1,4 +1,5 @@
 import math
+import os.path
 from pathlib import Path
 
 import torch
@@ -139,5 +140,5 @@ def main(args):
 if __name__ == "__main__":
     from omegaconf import OmegaConf
 
-    args = OmegaConf.load("config.yaml")
+    args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/config.yaml"))
     main(args)
