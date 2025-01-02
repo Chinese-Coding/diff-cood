@@ -57,11 +57,7 @@ def main(args):
     initial_global_step = 0
     global_step = 0
     first_epoch = 0
-    progress_bar = tqdm(
-        range(0, int(args.max_train_steps)),
-        initial=initial_global_step,
-        desc="Steps",
-    )
+    progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=initial_global_step, desc="Steps")
     for epoch in range(first_epoch, args.train_epochs):
         for step, batch in enumerate(train_dataloader):
             """处理图像"""
@@ -92,12 +88,12 @@ def main(args):
             得到的中间特征, 通道多, 而每个通道上的特征图少
             """
             img_sample, dpt_sample = img_params.sample.to("cpu"), dpt_params.sample.to("cpu")
-            logger.success(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, dpt: {dpt_sample.shape}")
+            # logger.success(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, dpt: {dpt_sample.shape}")
             channel_index = 2
             i1, j1, i2, j2 = 16, 16, 16, 16
             img_block, dpt_block = img_sample[0, channel_index, i1:i2, j1:j2], dpt_sample[0, channel_index, i1:i2, j1:j2]
             img_sample[0, channel_index, i1:i2, j1:j2], dpt_sample[0, channel_index, i1:i2, j1:j2] = dpt_block, img_block
-            logger.success(f"交换之后的中间层 Tensor 的 shape: img: {img_sample.shape}, dpt: {dpt_sample.shape}")
+            # logger.success(f"交换之后的中间层 Tensor 的 shape: img: {img_sample.shape}, dpt: {dpt_sample.shape}")
             img_params.sample, dpt_params.sample = img_sample, dpt_sample
 
             """交换完之后的步骤, 开始走没走完的层"""
@@ -112,7 +108,7 @@ def main(args):
                 F.mse_loss(img_noise_pred.float(), img_noise.float(), reduction="mean"),
                 F.mse_loss(dpt_noise_pred.float(), dpt_noise.float(), reduction="mean"),
             )  # 犹豫再三还是卸载了一行里面 (虽然会被 black 格式化成 4 行)
-            img_loss.backward()
+            img_loss.backward(retain_graph=True)
             dpt_loss.backward()
 
             img_optimizer.step()
