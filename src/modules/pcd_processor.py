@@ -4,16 +4,16 @@ from modules.base_processor import BaseProcessor
 from modules.layering_unet_2d_condition import LayeringUNet2DCParams
 
 
-class DptProcessor(BaseProcessor):
+class PcdProcessor(BaseProcessor):
 
     @torch.no_grad()
-    def prepare(self, dpt: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True):
-        noise, noisy_latents, timestep, encoder_hidden_states = super().prepare(dpt.to(dtype=self.weight_dtype), inputs_ids)
+    def prepare(self, pcd: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True):
+        noise, noisy_latents, timestep, encoder_hidden_states = super().prepare(pcd.to(dtype=self.weight_dtype), inputs_ids)
         down_block_res_samples, mid_block_res_sample = self.controlnet(
             noisy_latents,
             timestep,
             encoder_hidden_states=encoder_hidden_states,
-            controlnet_cond=dpt.to(dtype=self.weight_dtype),
+            controlnet_cond=pcd.to(dtype=self.weight_dtype),
             return_dict=False,
         )
         down_block_additional_residuals = [sample.to(dtype=self.weight_dtype) for sample in down_block_res_samples]
@@ -29,9 +29,9 @@ class DptProcessor(BaseProcessor):
                 mid_block_additional_residual=mid_block_res_sample,
             )
 
-    def forward(self, dpt: torch.Tensor, inputs_ids: torch.Tensor):
+    def forward(self, pcd: torch.Tensor, inputs_ids: torch.Tensor):
         noise, noisy_latents, timestep, encoder_hidden_states, down_block_res_samples, mid_block_res_sample = self.prepare(
-            dpt, inputs_ids
+            pcd, inputs_ids
         )
         noise_pred = self.unet(
             noisy_latents,

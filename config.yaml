@@ -1,3 +1,4 @@
+# TODO: 给配置文件分层, 都平铺是不是不太好?
 pretrained_model: /home/zfq/Desktop/stable-diffusion-2-1-base
 control_model: /home/zfq/Desktop/controlnet-sd21-depth-diffusers
 revision: null

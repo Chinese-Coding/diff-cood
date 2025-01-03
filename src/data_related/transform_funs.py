@@ -205,11 +205,11 @@ def fill_in_fast(depth_map, max_depth=15.0, custom_kernel=DIAMOND_KERNEL_7, extr
     return depth_map
 
 
-def dpt_transform(resolution):
+def pcd_transform(resolution):
     def transform(pc):
         # 投影成深度图
         dpt = Converter.proj_pc2dpt(pc, extrinsic=np.eye(4), intrinsic=np.eye(3), h=resolution, w=resolution)
-        dpt = fill_in_fast(dpt.astype(np.float32)) # 对深度图进行致密化, 之前写代码的时候忘记把这一段逻辑抄上了
+        dpt = fill_in_fast(dpt.astype(np.float32))  # 对深度图进行致密化, 之前写代码的时候忘记把这一段逻辑抄上了
         # 对深度图的大小进行调整
         dpt = np.array(_resize_img(_HWC3(_depth_normalize(dpt)), resolution))
         # 转换成 Tensor 并进行维度调整

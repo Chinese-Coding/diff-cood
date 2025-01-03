@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from data_related.stable_diffusion_dataset import StableDiffusionDataset
-from data_related.transform_funs import dpt_transform, img_transform
+from data_related.transform_funs import img_transform, pcd_transform
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,7 @@ def init_datasloader(args):
     )
     train_dataset = StableDiffusionDataset(args.root_dir)
     train_dataset.reinitialize()
-    train_dataset.set_transform(img_transform(args.resolution), dpt_transform(args.resolution))
+    train_dataset.set_transform(img_transform(args.resolution), pcd_transform(args.resolution))
     train_dataset.set_tokenizer(tokenizer)
     train_dataloader = DataLoader(
         train_dataset, args.batch_size, True, num_workers=args.num_workers, collate_fn=train_dataset.collate_fn, pin_memory=True
@@ -85,7 +85,7 @@ def init_modules(args, processor_class, optimizer_class, accelerator_project_con
         return processor, optimizer, lr_scheduler
 
 
-def enable_xformers_memory_efficient_attention(img_processor, dpt_processor):
+def enable_xformers_memory_efficient_attention(img_processor, pcd_processor):
     """判断 xformers 是否可以启用, 如果可以则启用, 否则则抛出异常"""
     from diffusers.utils.import_utils import is_xformers_available
 
@@ -101,12 +101,12 @@ def enable_xformers_memory_efficient_attention(img_processor, dpt_processor):
                 " https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
             )
             img_processor.enable_xformers_memory_efficient_attention()
-            dpt_processor.enable_xformers_memory_efficient_attention()
+            pcd_processor.enable_xformers_memory_efficient_attention()
     else:
         raise ValueError("xformers is not available. Make sure it is installed correctly")
 
 
-def resume_from_checkpoint(checkpoint, output_dir, img_processor, dpt_processor):
+def resume_from_checkpoint(checkpoint, output_dir, img_processor, pcd_processor):
     if checkpoint != "latest":
         path = os.path.basename(checkpoint)
     else:
