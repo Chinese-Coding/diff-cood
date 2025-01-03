@@ -89,14 +89,16 @@ def main(args):
             还有如何进行交换的问题:
             获得的中间层 Tensor 的 shape: img: torch.Size([4, 1280, 8, 8]), pcd: torch.Size([1, 1280, 8, 8])
             得到的中间特征, 通道多, 而每个通道上的特征图少
+            # 换成 BEV 图之后 (没有把图像和点云裁切为统一的大小)
+            获得的中间层 Tensor 的 shape: img: torch.Size([4, 1280, 10, 13]), pcd: torch.Size([1, 1280, 32, 16])
             """
             img_sample, pcd_sample = img_params.sample.to("cpu"), pcd_params.sample.to("cpu")
-            # logger.success(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
+            logger.success(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
             channel_index = 2
             i1, j1, i2, j2 = 16, 16, 16, 16
             img_block, pcd_block = img_sample[0, channel_index, i1:i2, j1:j2], pcd_sample[0, channel_index, i1:i2, j1:j2]
             img_sample[0, channel_index, i1:i2, j1:j2], pcd_sample[0, channel_index, i1:i2, j1:j2] = pcd_block, img_block
-            # logger.success(f"交换之后的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
+            logger.success(f"交换之后的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
             img_params.sample, pcd_params.sample = img_sample, pcd_sample
 
             """交换完之后的步骤, 开始走没走完的层"""

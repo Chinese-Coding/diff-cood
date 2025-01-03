@@ -36,3 +36,6 @@ lr_num_cycles: 1
 lr_power: 1.0
 set_grads_to_none: true
 max_grad_norm: 1.0
+
+# 数据处理有关的参数
+cav_lidar_range: [ -102.4, -51.2, -3, 102.4, 51.2, 1 ]

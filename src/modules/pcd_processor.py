@@ -9,36 +9,19 @@ class PcdProcessor(BaseProcessor):
     @torch.no_grad()
     def prepare(self, pcd: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True):
         noise, noisy_latents, timestep, encoder_hidden_states = super().prepare(pcd.to(dtype=self.weight_dtype), inputs_ids)
-        down_block_res_samples, mid_block_res_sample = self.controlnet(
-            noisy_latents,
-            timestep,
-            encoder_hidden_states=encoder_hidden_states,
-            controlnet_cond=pcd.to(dtype=self.weight_dtype),
-            return_dict=False,
-        )
-        down_block_additional_residuals = [sample.to(dtype=self.weight_dtype) for sample in down_block_res_samples]
-        mid_block_res_sample = mid_block_res_sample.to(dtype=self.weight_dtype)
         if all_return_tuple:
-            return noise, noisy_latents, timestep, encoder_hidden_states, down_block_additional_residuals, mid_block_res_sample
+            return noise, noisy_latents, timestep, encoder_hidden_states
         else:
             return noise, LayeringUNet2DCParams(
-                sample=noisy_latents,
-                timestep=timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                down_block_additional_residuals=down_block_additional_residuals,
-                mid_block_additional_residual=mid_block_res_sample,
+                sample=noisy_latents, timestep=timestep, encoder_hidden_states=encoder_hidden_states
             )
 
     def forward(self, pcd: torch.Tensor, inputs_ids: torch.Tensor):
-        noise, noisy_latents, timestep, encoder_hidden_states, down_block_res_samples, mid_block_res_sample = self.prepare(
-            pcd, inputs_ids
-        )
+        noise, noisy_latents, timestep, encoder_hidden_states = self.prepare(pcd, inputs_ids)
         noise_pred = self.unet(
             noisy_latents,
             timestep,
             encoder_hidden_states=encoder_hidden_states,
-            down_block_additional_residuals=[sample.to(dtype=self.weight_dtype) for sample in down_block_res_samples],
-            mid_block_additional_residual=mid_block_res_sample.to(dtype=self.weight_dtype),
             return_dict=False,
         )[0]
         return noise, noise_pred
