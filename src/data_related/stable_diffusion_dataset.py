@@ -11,6 +11,9 @@ from torch.utils.data import Dataset
 
 from data_related.entity import CAVData, PFTimestampData
 
+from omegaconf import OmegaConf
+import cv2
+
 
 def _load_camera_data(camera_files: List[Path], preLoad=True):
     return (
@@ -30,19 +33,28 @@ def _extract_values(d: Dict):
     return result
 
 
+def _replace_with_additional(file_path: str):
+    """Replace the main folder with 'additional' if file is not found."""
+    return (
+        file_path.replace("train", "additional/train")
+        .replace("validate", "additional/validate")
+        .replace("test", "additional/test")
+    )
+
+
 def _get_timestamp_data_path(cav_path: Path, timestamp: str):
     """
-    获取某一时间戳下数据的路径
+    获取某一时间戳下数据的路径 (考虑到灵活性, 这里还是返回元组, 用哪个就取哪个)
 
     :param cav_path 汽车所在路径
     :param timestamp 时间戳
     """
     yaml_file, lidar_file = cav_path / f"{timestamp}.yaml", os.path.join(cav_path, f"{timestamp}.pcd")
     camera_files = [cav_path / f"{timestamp}_camera{i}.png" for i in range(4)]
-    cav_path = Path(str(cav_path).replace("OPV2V", "OPV2V_Hetero"))
-    depth_files = [cav_path / f"{timestamp}_depth{i}.png" for i in range(4)]
-
-    return yaml_file, lidar_file, camera_files, depth_files
+    cav_path_dpt = Path(str(cav_path).replace("OPV2V", "OPV2V_Hetero"))
+    depth_files = [cav_path_dpt / f"{timestamp}_depth{i}.png" for i in range(4)]
+    cav_path_bev = Path(_replace_with_additional(str(cav_path))) / f"{timestamp}_bev_visibility.png"
+    return yaml_file, lidar_file, camera_files, depth_files, cav_path_bev
 
 
 def _pcd_to_np(pcd_file: str, need_color=True):
@@ -93,7 +105,7 @@ class StableDiffusionDataset(Dataset):
             for j, cav_id in enumerate(cav_list):
                 # save all yaml files to the dictionary
                 cav_path = scenario_folder / cav_id
-                outputs, timestampsLen = self._load_data_paths(cav_path)
+                outputs, _ = self._load_data_paths(cav_path)
                 self.scenario_database[i][cav_id] = outputs
         for scenario in self.scenario_database:
             self.flattened_database.extend(_extract_values(scenario))
@@ -108,7 +120,12 @@ class StableDiffusionDataset(Dataset):
         :return: The dictionary contains loaded yaml params and lidar data for each cav.
         """
         pathes = self.flattened_database[idx]
-        return CAVData(camera_data=_load_camera_data(pathes.cameras), lidar_np=_pcd_to_np(pathes.lidar, need_color=False))
+        return CAVData(
+            cav_info=OmegaConf.load(pathes.yaml),
+            camera_data=_load_camera_data(pathes.cameras),
+            lidar_np=_pcd_to_np(pathes.lidar, need_color=False),
+            bev_img=cv2.imread(pathes.bev),
+        )
 
     def __len__(self):
         return len(self.flattened_database)
@@ -165,7 +182,7 @@ class StableDiffusionDataset(Dataset):
 
         for timestamp in timestamps:
             # 将加载数据路径的函数, 移到了一个单独的函数中 (如果因为后面的代码还需要 `lidar_file` 我一定会让 `_GetTimestampDataPath` 函数返回一个字典)
-            yaml_file, lidar_file, camera_files, depth_files = _get_timestamp_data_path(cav_path, timestamp)
-            pfTimestampData = PFTimestampData(lidar=lidar_file, cameras=camera_files)
+            yaml_file, lidar_file, camera_files, depth_files, bev_file = _get_timestamp_data_path(cav_path, timestamp)
+            pfTimestampData = PFTimestampData(yaml=yaml_file, lidar=lidar_file, cameras=camera_files, bev=bev_file)
             outputs[timestamp] = pfTimestampData
         return outputs, len(timestamps)
