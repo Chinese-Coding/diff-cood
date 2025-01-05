@@ -33,8 +33,12 @@ def _project_points_to_bev_map(cav_lidar_range, points, ratio=0.1):
 
 def pcd_transform(cav_lidar_range):
     def transform(pcd):
-        bev_map = _project_points_to_bev_map(cav_lidar_range, pcd)
-        bev_map_tensor = torch.tensor(bev_map)
-        return bev_map_tensor.unsqueeze(0).repeat(3, 1, 1)  # 返回一个添加了一个维度的 bev_map
+        if not isinstance(pcd, list):  # 确保 pcd 是一个列表，统一处理
+            pcd = [pcd]
+
+        bev_maps = [torch.tensor(_project_points_to_bev_map(cav_lidar_range, i)).unsqueeze(0).repeat(3, 1, 1) for i in pcd]
+
+        # 如果是单个元素的列表，直接返回
+        return bev_maps[0] if len(bev_maps) == 1 else bev_maps
 
     return transform

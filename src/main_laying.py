@@ -1,7 +1,7 @@
 """不使用 accelerate, 同时进行某一层交换的 main 函数"""
 
 import math
-
+from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.nn.functional as F
 from loguru import logger
@@ -11,9 +11,21 @@ from main_utils import enable_xformers_memory_efficient_attention, get_optimizer
 from modules.img_processor import ImgProcessor
 from modules.layering_unet_2d_condition import LayeringUNet2DCModel, LayeringUNet2DCParams
 from modules.pcd_processor import PcdProcessor
+from pathlib import Path
+def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
+    """
+    取 5 * 5 个特征图进行交换, 在每个维度上均进行交换, 然后是对应图片交换
+    TODO: 需要考虑一个更完美的交换策略
+    """
+    assert img_sample.shape[0] == pcd_sample.shape[0] and img_sample.shape[1] == pcd_sample.shape[1]
 
+    img, pcd = img_sample[:, :, :5, :5], pcd_sample[:, :, :5, :5]
+    img_sample[:, :, :5, :5], pcd_sample[:, :, :5, :5] = pcd, img
+    return img_sample, pcd_sample
 
 def main(args):
+    loggering_dir = os.path.join(args.output_dir, args.logging_dir)
+    writer = SummaryWriter(log_dir=loggering_dir)
     optimizer_class = get_optimizer_class(args)
     train_dataloader = init_datasloader(args)
 
@@ -80,26 +92,10 @@ def main(args):
             pcd_params.to(pcd_device)
             pcd_params = pcd_unet.forward_control(pcd_unet.forward_down(pcd_unet.forward_pre(pcd_params)))
 
-            """
-            交换空间 (这些东西以后写成超参数)
-            交换的代码有问题, 这样写会导致:
-            Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed).
-            Saved intermediate values of the graph are freed when you call .backward() or autograd.grad().
-            Specify retain_graph=True if you need to backward through the graph a second time or if you need to access saved tensors after calling backward.
-            还有如何进行交换的问题:
-            获得的中间层 Tensor 的 shape: img: torch.Size([4, 1280, 8, 8]), pcd: torch.Size([1, 1280, 8, 8])
-            得到的中间特征, 通道多, 而每个通道上的特征图少
-            # 换成 BEV 图之后 (没有把图像和点云裁切为统一的大小)
-            获得的中间层 Tensor 的 shape: img: torch.Size([4, 1280, 10, 13]), pcd: torch.Size([1, 1280, 32, 16])
-            """
+            """交换空间 (这些东西以后写成超参数)"""
             img_sample, pcd_sample = img_params.sample.to("cpu"), pcd_params.sample.to("cpu")
-            logger.success(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
-            channel_index = 2
-            i1, j1, i2, j2 = 16, 16, 16, 16
-            img_block, pcd_block = img_sample[0, channel_index, i1:i2, j1:j2], pcd_sample[0, channel_index, i1:i2, j1:j2]
-            img_sample[0, channel_index, i1:i2, j1:j2], pcd_sample[0, channel_index, i1:i2, j1:j2] = pcd_block, img_block
-            logger.success(f"交换之后的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
-            img_params.sample, pcd_params.sample = img_sample, pcd_sample
+            # logger.debug(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
+            img_params.sample, pcd_params.sample = _change(img_sample, pcd_sample)
 
             """交换完之后的步骤, 开始走没走完的层"""
             img_params.to(img_device), pcd_params.to(pcd_device)
@@ -132,10 +128,15 @@ def main(args):
                 "pcd_loss": pcd_loss.detach().item(),
                 "pcd_lr": pcd_lr_scheduler.get_last_lr()[0],
             }
+
+            # 记录损失到 TensorBoard
+            writer.add_scalar("Loss/img_loss", img_loss.detach().item(), global_step)
+            writer.add_scalar("Loss/pcd_loss", pcd_loss.detach().item(), global_step)
+
             progress_bar.update(1)
             global_step += 1
             progress_bar.set_postfix(**{**img_logs, **pcd_logs})
-
+    writer.close()
 
 if __name__ == "__main__":
     import os

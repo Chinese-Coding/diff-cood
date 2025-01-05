@@ -440,12 +440,12 @@ def diff_project_world_objects(object_dict, lidar_pose, lidar_range, order, enla
         lidar_range_z_larger[5] += 10
         lidar_range = lidar_range_z_larger
     for object_id, object_content in object_dict.items():
-        location = object_content.location
-        rotation = object_content.angle
-        center = object_content.get("center", [0, 0, 0])
-        extent = object_content.extent
-
         # fmt: off
+        # 部分字段的赋值写在了同一行, 只是为了好看, 并没有其他深意
+        location, rotation, center, extent = (
+            object_content["location"], object_content["angle"],
+            object_content.get("center", [0, 0, 0]), object_content["extent"],
+        )
         object_pose = [
             location[0] + center[0], location[1] + center[1], location[2] + center[2],
             rotation[0], rotation[1], rotation[2],

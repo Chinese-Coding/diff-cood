@@ -6,7 +6,7 @@
 Template for AnchorGenerator
 """
 
-from typing import Literal
+from typing import Literal, Dict
 
 import cv2
 import numpy as np
@@ -42,14 +42,14 @@ class DiffBasePostProcessor:
         gt_box = projected_object_bbx_corner[selected_indices]
         return box_utils.mask_boxes_outside_range_numpy(gt_box, self.gt_range, order=None)
 
-    def generate_object_center_lidar(self, cav_data, ref_lidar_pose, enlarge_z=False):
+    def generate_object_center_lidar(self, cav_data: Dict, ref_lidar_pose, enlarge_z=False):
         """使用 lidar 传感器时, 对应的 object center"""
-        vehicles: DictConfig = cav_data.cav_info.vehicles
+        vehicles = cav_data.cav_info["vehicles"]
         return self._generate_object_center(vehicles, ref_lidar_pose, enlarge_z)
 
     def generate_object_center_camera(self, cav_data, ref_lidar_pose, enlarge_z=False):
         """获取使用 camera 传感器时, 对应的 object center"""
-        vehicles: DictConfig = cav_data.cav_info.vehicles
+        vehicles = cav_data.cav_info["vehicles"]
         inf_filter_range = [-1e5, -1e5, -1e5, 1e5, 1e5, 1e5]
         visibility_map = np.asarray(cv2.cvtColor(cav_data.bev_img, cv2.COLOR_BGR2GRAY))
         # TODO: 注意这里使用的是 `lidar_pose` 而并非 `lidar_pose_clean` 也就是说这里暂时不考虑噪声的问题
@@ -61,7 +61,7 @@ class DiffBasePostProcessor:
         }  # 选出那些在 BEV 中可见的物体 (object, vehicles)
         return self._generate_object_center(updated_vehicles, ref_lidar_pose, enlarge_z)
 
-    def _generate_object_center(self, vehicles, ref_lidar_pose, enlarge_z=False):
+    def _generate_object_center(self, vehicles: Dict, ref_lidar_pose, enlarge_z=False):
         filter_range = self.cav_lidar_range if self.train else self.gt_range
 
         output_dict = box_utils.diff_project_world_objects(vehicles, ref_lidar_pose, filter_range, self.order, enlarge_z)
