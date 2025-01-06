@@ -156,7 +156,7 @@ class StableDiffusionDataset(Dataset):
         return CAVData(
             cav_info=_load_yaml(pathes.yaml),
             camera_data=_load_camera_data(pathes.cameras),
-            lidar_np=_pcd_to_np(pathes.lidar, need_color=False),
+            lidar_np=_pcd_to_np(pathes.lidar, False),
             bev_img=cv2.imread(pathes.bev),
             lidar_splitted=[_pcd_to_np(file, False) for file in pathes.lidar_splitted],
         )

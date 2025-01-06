@@ -7,11 +7,19 @@ import torch.nn.functional as F
 from loguru import logger
 from tqdm.auto import tqdm
 
-from main_utils import enable_xformers_memory_efficient_attention, get_optimizer_class, init_datasloader, init_modules
+from main_utils import (
+    enable_xformers_memory_efficient_attention,
+    get_optimizer_class,
+    init_datasloader,
+    init_modules,
+    save_modules,
+    load_modules,
+)
 from modules.img_processor import ImgProcessor
-from modules.layering_unet_2d_condition import LayeringUNet2DCModel, LayeringUNet2DCParams
+from modules.layering_unet_2dc_model import LayeringUNet2DCModel, LayeringUNet2DCParams
 from modules.pcd_processor import PcdProcessor
-from pathlib import Path
+
+
 def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
     """
     取 5 * 5 个特征图进行交换, 在每个维度上均进行交换, 然后是对应图片交换
@@ -23,9 +31,13 @@ def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
     img_sample[:, :, :5, :5], pcd_sample[:, :, :5, :5] = pcd, img
     return img_sample, pcd_sample
 
+
 def main(args):
-    loggering_dir = os.path.join(args.output_dir, args.logging_dir)
-    writer = SummaryWriter(log_dir=loggering_dir)
+    logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    logfile_path = os.path.join(logging_dir, "{time:YYYY-MM-DD}.log")
+    writer = SummaryWriter(log_dir=logging_dir)
+    logger.add(logfile_path, rotation="1 day")
+
     optimizer_class = get_optimizer_class(args)
     train_dataloader = init_datasloader(args)
 
@@ -45,6 +57,19 @@ def main(args):
     pcd_processor, pcd_optimizer, pcd_lr_scheduler = init_modules(
         args, PcdProcessor, optimizer_class
     )  # type: PcdProcessor, ignore, ignore
+    img_processor.set_train()
+    pcd_processor.set_train()
+
+    """加载权重 (上面那个是预训练权重, 下面这个是自己的权重)"""
+    first_epoch, img_loss, pcd_loss = 0, 0, 0  # 为保存权重特地将变量声明到前面
+    if "resume_file" in args:
+        img_epoch = load_modules(f"{args.resume_file}-img.pth", img_processor.unet, img_optimizer, img_lr_scheduler)
+        pcd_epoch = load_modules(f"{args.resume_file}-pcd.pth", pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler)
+        assert (
+            img_epoch == pcd_epoch
+        )  # 检查一下两个 epoch 相等 (虽然 assert 可以选择关闭, 但是一行检查代码写起来简单, 而且一般也不会关闭)
+        first_epoch = img_epoch + 1
+        logger.success(f"从 {args.resume_file} 中加载 img 和 pcd 模型")
 
     """显存优化部分"""
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
@@ -65,15 +90,16 @@ def main(args):
     if args.gradient_checkpointing:
         img_processor.enable_gradient_checkpointing()
         pcd_processor.enable_gradient_checkpointing()
+
     img_device, pcd_device = torch.device("cuda:0"), torch.device("cuda:1")
     img_processor.to(img_device, weight_dtype, True)
     pcd_processor.to(pcd_device, weight_dtype, True)
 
-    initial_global_step = 0
     global_step = 0
-    first_epoch = 0
-    progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=initial_global_step, desc="Steps")
+    progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=0, desc="Steps")
+    logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epochs} 个 epoch")
     for epoch in range(first_epoch, args.train_epochs):
+        logger.success(f"第 {epoch} 个 epoch 开始训练")
         for step, batch in enumerate(train_dataloader):
             """处理图像"""
             img_noise, img_params = img_processor.prepare(
@@ -136,7 +162,12 @@ def main(args):
             progress_bar.update(1)
             global_step += 1
             progress_bar.set_postfix(**{**img_logs, **pcd_logs})
+
+        save_modules(args.output_dir, epoch, img_processor.unet, img_optimizer, img_lr_scheduler, "img")
+        save_modules(args.output_dir, epoch, pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler, "pcd")
+
     writer.close()
+
 
 if __name__ == "__main__":
     import os

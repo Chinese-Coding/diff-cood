@@ -5,7 +5,7 @@ from diffusers import AutoencoderKL, ControlNetModel, DDPMScheduler, UNet2DCondi
 from torch import nn
 from transformers import PretrainedConfig
 
-from modules.layering_unet_2d_condition import LayeringUNet2DCModel, LayeringUNet2DCParams
+from modules.layering_unet_2dc_model import LayeringUNet2DCModel, LayeringUNet2DCParams
 
 
 def import_model_class_from_pretrained_model(pretrained_model: str, revision: str):
@@ -45,9 +45,17 @@ class BaseProcessor(nn.Module):
         )
 
         self.noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model, subfolder="scheduler", revision=revision)
+        self.num_train_timesteps = self.noise_scheduler.config.num_train_timesteps
 
+    def set_train(self):
         self.vae.requires_grad_(False)
         self.unet.train()
+        self.text_encoder.requires_grad_(False)
+        self.controlnet.requires_grad_(False)
+
+    def set_eval(self):
+        self.vae.requires_grad_(False)
+        self.unet.requires_grad_(False)
         self.text_encoder.requires_grad_(False)
         self.controlnet.requires_grad_(False)
 
@@ -73,15 +81,17 @@ class BaseProcessor(nn.Module):
         self.weight_dtype = weight_dtype
 
     @torch.no_grad()
-    def prepare(self, x: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True):
+    def prepare(self, x: torch.Tensor, inputs_ids: torch.Tensor, all_return_tuple: bool = True, t: int = -1):
         """
         :param all_return_tuple: 是否将全部返回值以 Tuple 的形式返回
+        :param t: 用于推理时指定时刻
         """
         latents = self.vae.encode(x).latent_dist.sample()
         latents = latents * self.vae.config.scaling_factor
         noise = torch.randn_like(latents)
-        bsz = latents.shape[0]
-        timestep = torch.randint(0, self.noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
+        batch_size = latents.shape[0]
+        timestep = torch.randint(0, self.num_train_timesteps, (batch_size,)) if t == -1 else torch.full((batch_size,), t)
+        timestep = timestep.to(device=latents.device, dtype=torch.long)
         noisy_latents = self.noise_scheduler.add_noise(latents.float(), noise.float(), timestep).to(dtype=self.weight_dtype)
         encoder_hidden_states = self.text_encoder(inputs_ids, return_dict=False)[0]
         if all_return_tuple:

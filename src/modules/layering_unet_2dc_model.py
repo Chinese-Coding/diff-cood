@@ -31,6 +31,10 @@ class LayeringUNet2DCParams(BaseModel):
     lora_scale: float = 1.0
     down_block_res_samples: Optional[list] = None
 
+    # 推理时保留的的 UP 层的参数
+    preserved_up_indices: Optional[List[int]] = None
+    preserved_up_feature: Optional[Dict[int, torch.Tensor]] = None
+
     def to(self, device: torch.device):
         for attr, value in self.__dict__.items():
             # 将所有 torch.Tensor 类型的属性搬运到指定设备
@@ -204,6 +208,7 @@ class LayeringUNet2DCModel(diffusers.UNet2DConditionModel):
     def forward_up(self, params: LayeringUNet2DCParams):
         sample = params.sample
         down_block_res_samples = params.down_block_res_samples  # 这里加一个 copy 应该会更合适一些的
+        preserved_up_feature = {}
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
 
@@ -230,6 +235,8 @@ class LayeringUNet2DCModel(diffusers.UNet2DConditionModel):
                     res_hidden_states_tuple=res_samples,
                     upsample_size=upsample_size,
                 )
+            if params.preserved_up_indices is not None and i in params.preserved_up_indices:
+                preserved_up_feature[i] = sample.detach()
 
         # 6. post-process
         if self.conv_norm_out:
@@ -241,4 +248,13 @@ class LayeringUNet2DCModel(diffusers.UNet2DConditionModel):
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, params.lora_scale)
         params.sample, params.down_block_res_samples = sample, params.down_block_res_samples
+        params.preserved_up_feature = preserved_up_feature
         return params  # 为了和前面一系列的函数的返回值同一, 这里还是选择返回 `params` (虽然这是最后一层)
+
+    def forward_all(self, params: LayeringUNet2DCParams):
+        params = self.forward_pre(params)
+        params = self.forward_down(params)
+        params = self.forward_control(params)
+        params = self.forward_middle(params)
+        params = self.forward_up(params)
+        return params  # 理论上这一语句可以和上一个语句写在一起

@@ -10,6 +10,7 @@ from transformers import AutoTokenizer
 
 from data_related.stable_diffusion_dataset import StableDiffusionDataset
 from data_related.transform_funs import img_transform, pcd_transform
+from loguru import logger as loguru_logger
 
 logger = get_logger(__name__)
 
@@ -146,3 +147,26 @@ def save_checkpoint(output_dir, accelerator, global_step, postfix):
     save_path = os.path.join(output_dir, f"checkpoint-{global_step}-{postfix}")
     accelerator.save_state(save_path)
     logger.info(f"Saved state to {save_path}")
+
+
+def save_modules(output_dir: str, epoch, unet, optimizer, lr_scheduler, postfix):
+    """TODO: 换成 safe tensor 的形式"""
+    save_path = os.path.join(output_dir, f"checkpoint-{epoch}-{postfix}.pth")
+    torch.save(
+        {
+            "epoch": epoch,
+            "unet": unet.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "lr_scheduler": lr_scheduler.state_dict(),
+        },
+        save_path,
+    )
+    loguru_logger.success(f"将 {postfix} 模型保存在 {save_path}")
+
+
+def load_modules(resume_file, unet, optimizer, lr_scheduler):
+    checkpoint = torch.load(resume_file, weights_only=False)
+    unet.load_state_dict(checkpoint["unet"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+    return checkpoint["epoch"]

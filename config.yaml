@@ -1,28 +1,34 @@
 # TODO: 给配置文件分层, 都平铺是不是不太好?
+# 和路径有关的一系列参数
 pretrained_model: /home/zfq/Desktop/stable-diffusion-2-1-base
 control_model: /home/zfq/Desktop/controlnet-sd21-depth-diffusers
 revision: null
 output_dir: /home/zfq/Desktop/logs/controlnet
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
+# resume_file: /home/zfq/Desktop/logs/controlnet/checkpoint-0
+
 resume_from_checkpoint: null
 layering: True # 是否使用 `LayeringUNet2dConditionModel`
 
 # 训练有关的配置文件
+# 显存优化方面的参数 (不包括 batch size, 虽然设置较小的 batch size 有助于降低显存占用)
 use_8bit_adam: true
 enable_xformers_memory_efficient_attention: true
+gradient_checkpointing: true
+allow_tf32: true
+mixed_precision: fp16
+
 batch_size: 1
 gradient_accumulation_steps: 1
-mixed_precision: fp16
 report_to: tensorboard
 max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
-train_epochs: 1
+train_epochs: 10
 resolution: 512
 num_workers: 4
 checkpointing_steps: 500
 checkpoints_total_limit: 10 # 这里还是设置的小一点为妙, 不然太占存储空间了
-gradient_checkpointing: true
-allow_tf32: true
+
 
 # 优化器有关参数 (大部分都是根据 `train_controlnet` 写的)
 learning_rate: 5e-6
@@ -39,3 +45,7 @@ max_grad_norm: 1.0
 
 # 数据处理有关的参数
 cav_lidar_range: [ -102.4, -51.2, -3, 102.4, 51.2, 1 ]
+
+# 推理有关的参数
+preserved_up_indices: [0, 1, 2, 3]
+t: 261 # 参考 diff 选择一个时间戳
