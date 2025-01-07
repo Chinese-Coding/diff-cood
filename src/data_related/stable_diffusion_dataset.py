@@ -14,6 +14,14 @@ from torch.utils.data import Dataset
 
 from data_related.entity import CAVData, PFTimestampData
 from opencood.data_utils.post_processor.diff_base_post_processor import DiffPostProcessor
+from data_related.entity import CAVData, LiftSplatShootParams, PFTimestampData
+from opencood.utils.camera_utils import (
+    sample_augmentation,
+    img_transform,
+    normalize_img,
+    img_to_tensor,  # 如果以后添加对深度图的处理, 这个函数会用到, 因此先不删除
+)
+from opencood.utils.transformation_utils import x1_to_x2
 
 loader = yaml.Loader
 loader.add_implicit_resolver(
@@ -103,20 +111,8 @@ class StableDiffusionDataset(Dataset):
         self.scenario_database: List[Dict[str, Dict[str, PFTimestampData]]] = []
         self.flattened_database = []
         # 输入图片的 0, 1, 2, 3 序号照片的提示词 (从 0 ~ 3: 前, 左, 右, 后)
-        self.img_captions = [
-            "A front view taken by an overhead camera of a moving vehicle",
-            "A left view taken by a camera on top of a moving vehicle",
-            "A right view taken by a camera on top of a moving vehicle",
-            "A rear view taken by an overhead camera of a moving vehicle",
-        ]
-        self.pcd_captions = [
-            "Bird's-eye view projection of the front view of the point cloud of a moving vehicle scanned with LiDAR",
-            "Bird's-eye view projection of the left view of the point cloud image of a moving vehicle scanned by LiDAR",
-            "Bird's-eye view projection of the right view of the point cloud image of a moving vehicle scanned by LiDAR",
-            "Bird's-eye view projection of the rear view of the point cloud of a moving vehicle scanned with LiDAR",
-        ]
-        self.postprocessor = DiffPostProcessor(args.postprocess_args)
-        self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
+        self.img_captions = [""]
+        self.pcd_captions = [""]
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -178,14 +174,15 @@ class StableDiffusionDataset(Dataset):
 
     def collate_fn(self, batches: List[CAVData]):
         camera_data, lidar_np, img_inputs_ids, pcd_inputs_ids = [], [], [], []
-        lidar_splitted_list = []
         pos_equal_one_list, neg_equal_one_list, targets_list = [], [], []
+        batch_lss_params = []
+
         for batch in batches:
             camera_data.append(torch.stack(self.img_transform(batch.camera_data)))
             lidar_np.append(self.pcd_transform(batch.lidar_np))
             img_inputs_ids.append(self._get_inputs_ids(self.img_captions))
             pcd_inputs_ids.append(self._get_inputs_ids(self.pcd_captions))
-            lidar_splitted_list.append(torch.stack(self.pcd_transform(batch.lidar_splitted)))
+            batch_lss_params.append(self.get_lift_splat_shoot_inputs(self.data_aug_conf, batch, False))
 
             # 目标检测所需的参数
             object_np, mask, _ = self.postprocessor.generate_object_center_lidar(batch, batch.cav_info["lidar_pose"])
@@ -199,14 +196,14 @@ class StableDiffusionDataset(Dataset):
         return {
             # camera shape: (batch, 4, 3, W, H), 这个 4 是每个车有四个相机
             "img": torch.stack(camera_data),
-            # pcd shape: (batch, 4, 3, W', H'), 4 是分割之后的点云, 3 将点云投影为 BEV 之后通过重复 3 扩展成通道数为 3 的 BEV
-            "pcd": torch.stack(lidar_splitted_list),
+            "pcd": torch.stack(lidar_np),
             "img_inputs_ids": torch.stack(img_inputs_ids),
             "pcd_inputs_ids": torch.stack(pcd_inputs_ids),
             # 目标检测所需的参数
             "pos_equal_one": torch.stack(pos_equal_one_list),
             "neg_equal_one": torch.stack(neg_equal_one_list),
             "targets": torch.stack(targets_list),
+            "lss_params": LiftSplatShootParams.collate_fn(batch_lss_params),
         }
 
     def set_transform(self, img_transform, pcd_transform):
@@ -215,6 +212,10 @@ class StableDiffusionDataset(Dataset):
 
     def set_tokenizer(self, tokenizer):
         self.tokenizer = tokenizer
+
+    def set_data_aug_conf(self, data_aug_conf):
+        """为 lls 而设置的参数"""
+        self.data_aug_conf = data_aug_conf
 
     def _load_data_paths(self, cav_path: Path):
         outputs = {}
@@ -237,3 +238,81 @@ class StableDiffusionDataset(Dataset):
             )
             outputs[timestamp] = pfTimestampData
         return outputs, len(timestamps)
+
+    @staticmethod
+    def get_ext_int(cav_info: Dict, camera_id: int):
+        """
+        TODO: 这段代码是直接从 HEAL 那边搬过来的, 需要搞明白这部分代码到底在干什么 (ps: HEAL 的代码很复杂, 改起来很困难)
+        """
+        camera_coords = np.array(cav_info[f"camera{camera_id}"]["cords"]).astype(np.float32)
+        # TODO: 这里使用的是 `lidar_pose` 而并非 `lidar_pose_clean`
+        camera_to_lidar = x1_to_x2(camera_coords, cav_info["lidar_pose"]).astype(np.float32)  # T_LiDAR_camera
+        camera_to_lidar = camera_to_lidar @ np.array(
+            [[0, 0, 1, 0], [1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]], dtype=np.float32
+        )  # UE4 coord to opencv coord
+        camera_intrinsic = np.array(cav_info[f"camera{camera_id}"]["intrinsic"]).astype(np.float32)
+        return camera_to_lidar, camera_intrinsic
+
+    def get_lift_splat_shoot_inputs(self, data_aug_conf, cav_data: CAVData, return_tuple=True):
+        imgs, rots, trans, intrins, post_rots, post_trans = [], [], [], [], [], []  # lift splat shoot 需要的参数
+        extrinsics = []  # 不知道哪里需要的参数
+        for i, img in enumerate(cav_data.camera_data):
+            camera_to_lidar, camera_intrinsic = self.get_ext_int(cav_data.cav_info, i)
+
+            intrin = torch.from_numpy(camera_intrinsic)
+            rot = torch.from_numpy(camera_to_lidar[:3, :3])  # R_wc, we consider world-coord is the lidar-coord
+            tran = torch.from_numpy(camera_to_lidar[:3, 3])  # T_wc
+
+            post_rot = torch.eye(2)
+            post_tran = torch.zeros(2)
+
+            img_src = [img]
+
+            # TODO: 增加对深度图的处理
+            # if self.load_depth_file:
+            #     depth_img = selected_cav_base["depth_data"][idx]
+            #     img_src.append(depth_img)
+            # else:
+            #     depth_img = None
+            # TODO: 增加 `self.train` 这个参数
+            resize, resize_dims, crop, flip, rotate = sample_augmentation(data_aug_conf, True)
+            img_src, post_rot2, post_tran2 = img_transform(
+                img_src, post_rot, post_tran, resize, resize_dims, crop, flip, rotate
+            )
+            # for convenience, make augmentation matrices 3x3
+            post_tran = torch.zeros(3)
+            post_rot = torch.eye(3)
+            post_tran[:2] = post_tran2
+            post_rot[:2, :2] = post_rot2
+
+            # decouple RGB and Depth
+
+            img_src[0] = normalize_img(img_src[0])
+            # if self.load_depth_file:
+            #     img_src[1] = img_to_tensor(img_src[1]) * 255
+
+            imgs.append(torch.cat(img_src, dim=0))
+            intrins.append(intrin)
+            extrinsics.append(torch.from_numpy(camera_to_lidar))
+            rots.append(rot)
+            trans.append(tran)
+            post_rots.append(post_rot)
+            post_trans.append(post_tran)
+        if return_tuple:
+            return (
+                torch.stack(imgs),
+                torch.stack(rots),
+                torch.stack(trans),
+                torch.stack(intrins),
+                torch.stack(post_rots),
+                torch.stack(post_trans),
+            )
+        else:
+            return LiftSplatShootParams(
+                imgs=torch.stack(imgs),
+                rots=torch.stack(rots),
+                trans=torch.stack(trans),
+                intrins=torch.stack(intrins),
+                post_rots=torch.stack(post_rots),
+                post_trans=torch.stack(post_trans),
+            )

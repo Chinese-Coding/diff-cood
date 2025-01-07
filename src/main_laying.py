@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
+from data_related.entity import LiftSplatShootParams
 from main_utils import (
     enable_xformers_memory_efficient_attention,
     get_change_fun,
@@ -21,6 +22,7 @@ from main_utils import (
 from modules.img_processor import ImgProcessor
 from modules.layering_unet_2dc_model import LayeringUNet2DCModel, LayeringUNet2DCParams
 from modules.pcd_processor import PcdProcessor
+from opencood.models.lift_splat_shoot import LiftSplatShoot
 
 
 def main(args):
@@ -90,12 +92,20 @@ def main(args):
     global_step = 0
     progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=0, desc="Steps")
     logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epochs} 个 epoch")
+    lss_model = LiftSplatShoot(args.lift_splat_shoot, img_device)  # 新增一个模型用于处理图像
     for epoch in range(first_epoch, args.train_epochs):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
         for step, batch in enumerate(train_dataloader):
+            """预处理图像, 把图像处理为 BEV 图"""
+            lss_params: LiftSplatShootParams = batch["lss_params"]
+            lss_params.to(img_device)
+            img = lss_model(
+                lss_params.imgs, lss_params.rots, lss_params.trans, lss_params.intrins, lss_params.post_rots, lss_params.post_trans # fmt: skip
+            )
+
             """处理图像"""
             img_noise, img_params = img_processor.prepare(
-                batch["img"].to(img_device), batch["img_inputs_ids"].to(img_device), False
+                img.to(img_device), batch["img_inputs_ids"].to(img_device), False
             )  # type: torch.Tensor, LayeringUNet2DCParams
             img_unet: LayeringUNet2DCModel = img_processor.unet
             img_params.to(img_device)

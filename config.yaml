@@ -69,6 +69,32 @@ postprocess_args:
     num_bins: 2
     anchor_yaw: *anchor_yaw
 
+# LiftSplatShoot 模型需要的参数
+lift_splat_shoot:
+    grid_conf:
+        xbound: [-51.2, 51.2, 0.4]   # Limit the range of the x direction and divide the grids
+        ybound: [-51.2, 51.2, 0.4]   # Limit the range of the y direction and divide the grids
+        zbound: [-10, 10, 20.0]   # Limit the range of the z direction and divide the grids
+        ddiscr: [2, 50, 48]
+        mode: 'LID'
+    data_aug_conf: # 数据增强所需的参数
+        resize_lim: [0.65, 0.7]
+        final_dim: [384, 512]
+        rot_lim: [-3.6, 3.6]
+        H: 600
+        W: 800
+        rand_flip: False
+        bot_pct_lim: [0.0, 0.05]
+        cams: ['camera0', 'camera1', 'camera2', 'camera3']
+        Ncams: 4
+    img_downsample: 8
+    img_features: 128
+    use_depth_gt: false
+    depth_supervision: false # HEAL 配置文件这里是 true, 但是我们还没有加载 depth 数据, 所以这里先设置为 false
+    camera_encoder: EfficientNet
+    outC: 3
+
+
 # 推理有关的参数
 preserved_up_indices: [0, 1, 2, 3]
 t: 261 # 参考 diff 选择一个时间戳
