@@ -5,12 +5,12 @@ import torch
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from diffusers.optimization import get_scheduler
+from loguru import logger as loguru_logger
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from data_related.stable_diffusion_dataset import StableDiffusionDataset
 from data_related.transform_funs import img_transform, pcd_transform
-from loguru import logger as loguru_logger
 
 logger = get_logger(__name__)
 

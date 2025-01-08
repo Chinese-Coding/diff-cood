@@ -7,12 +7,13 @@
 Common utilities
 """
 
-import numpy as np
-import torch
-from shapely.geometry import Polygon
 import json
 import pickle
 from collections import OrderedDict
+
+import numpy as np
+import torch
+from shapely.geometry import Polygon
 
 
 def update_dict(d1, d2):

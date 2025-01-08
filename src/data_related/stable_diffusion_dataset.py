@@ -8,8 +8,8 @@ import numpy as np
 import open3d as o3d
 import torch
 import yaml
-from PIL import Image
 from loguru import logger
+from PIL import Image
 from torch.utils.data import Dataset
 
 from data_related.entity import CAVData, PFTimestampData

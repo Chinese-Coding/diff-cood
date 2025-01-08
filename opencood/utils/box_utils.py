@@ -6,16 +6,16 @@
 """
 Bounding box related utility functions
 """
+import copy
 import sys
 
 import numpy as np
-
 import torch
 import torch.nn.functional as F
+from pyquaternion import Quaternion
+
 import opencood.utils.common_utils as common_utils
 from opencood.utils.transformation_utils import x1_to_x2, x_to_world
-from pyquaternion import Quaternion
-import copy
 
 
 def corner_to_center_torch(corner3d, order="lwh"):

@@ -43,9 +43,37 @@ lr_power: 1.0
 set_grads_to_none: true
 max_grad_norm: 1.0
 
-# 数据处理有关的参数
-cav_lidar_range: [ -102.4, -51.2, -3, 102.4, 51.2, 1 ]
+cav_lidar_range: &cav_lidar_range [-102.4, -51.2, -3, 102.4, 51.2, 1]
+ratio: &ratio 0.2
+
+postprocess_args:
+  order: hwl
+  max_num: 150
+  nms_thresh: 0.15
+  cav_lidar_range: *cav_lidar_range
+  gt_range: *cav_lidar_range
+  ratio: *ratio # 投影成 BEV 的缩放比例, 生成 anchor 时用来代替体素大小 (vx, vh)
+  anchor_args:
+    l: 3.9
+    w: 1.6
+    h: 1.56
+    r: &anchor_yaw [0, 90]
+    feature_stride: 2
+    num: 2
+  target_args:
+    pos_threshold: 0.6
+    neg_threshold: 0.45
+    score_threshold: 0.2
+  dir_args:
+    dir_offset: 0.7853
+    num_bins: 2
+    anchor_yaw: *anchor_yaw
 
 # 推理有关的参数
 preserved_up_indices: [0, 1, 2, 3]
 t: 261 # 参考 diff 选择一个时间戳
+
+# 特征交换有关的参数
+change_args:
+  patch_size: 5
+  strategy: random

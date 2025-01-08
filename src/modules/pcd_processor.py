@@ -1,9 +1,8 @@
+import einops
 import torch
 
 from modules.base_processor import BaseProcessor
 from modules.layering_unet_2dc_model import LayeringUNet2DCParams
-
-import einops
 
 
 class PcdProcessor(BaseProcessor):
