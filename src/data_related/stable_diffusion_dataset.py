@@ -12,15 +12,10 @@ from loguru import logger
 from PIL import Image
 from torch.utils.data import Dataset
 
-from data_related.entity import CAVData, PFTimestampData
-from opencood.data_utils.post_processor.diff_base_post_processor import DiffPostProcessor
 from data_related.entity import CAVData, LiftSplatShootParams, PFTimestampData
-from opencood.utils.camera_utils import (
-    sample_augmentation,
-    img_transform,
-    normalize_img,
-    img_to_tensor,  # 如果以后添加对深度图的处理, 这个函数会用到, 因此先不删除
-)
+from opencood.data_utils.post_processor.diff_base_post_processor import DiffPostProcessor
+from opencood.utils.camera_utils import img_to_tensor  # 如果以后添加对深度图的处理, 这个函数会用到, 因此先不删除
+from opencood.utils.camera_utils import img_transform, normalize_img, sample_augmentation
 from opencood.utils.transformation_utils import x1_to_x2
 
 loader = yaml.Loader
@@ -113,6 +108,9 @@ class StableDiffusionDataset(Dataset):
         # 输入图片的 0, 1, 2, 3 序号照片的提示词 (从 0 ~ 3: 前, 左, 右, 后)
         self.img_captions = [""]
         self.pcd_captions = [""]
+
+        self.postprocessor = DiffPostProcessor(args.postprocess_args)
+        self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)

@@ -1,5 +1,7 @@
 import os
 import shutil
+import sys
+from typing import Literal
 
 import torch
 from accelerate import Accelerator
@@ -8,6 +10,7 @@ from diffusers.optimization import get_scheduler
 from loguru import logger as loguru_logger
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoTokenizer
 
 from data_related.stable_diffusion_dataset import StableDiffusionDataset
@@ -30,7 +33,8 @@ def get_optimizer_class(args):
     return optimizer_class
 
 
-def init_datasloader(args):
+def init_datasloader(args, data_aug_conf):
+    """嫌弃从 `args` 中的 `lift_splat_shoot_args` 传入 `data_aug_conf` 太长了, 于是从调用的地方传递"""
     tokenizer = AutoTokenizer.from_pretrained(
         args.pretrained_model,
         subfolder="tokenizer",
@@ -39,9 +43,9 @@ def init_datasloader(args):
     )
     train_dataset = StableDiffusionDataset(args)
     train_dataset.reinitialize()
-    train_dataset.set_transform(img_transform(), pcd_transform(args.cav_lidar_range))
+    train_dataset.set_transform(img_transform(), pcd_transform(args.cav_lidar_range, args.ratio))
     train_dataset.set_tokenizer(tokenizer)
-    train_dataset.set_data_aug_conf(args.lift_splat_shoot.data_aug_conf)
+    train_dataset.set_data_aug_conf(data_aug_conf)
     train_dataloader = DataLoader(
         train_dataset, args.batch_size, True, num_workers=args.num_workers, collate_fn=train_dataset.collate_fn, pin_memory=True
     )
@@ -151,18 +155,18 @@ def save_checkpoint(output_dir, accelerator, global_step, postfix):
     logger.info(f"Saved state to {save_path}")
 
 
-def save_modules(output_dir: str, epoch, unet, optimizer, lr_scheduler, postfix):
+def save_modules(output_dir: str, epoch, unet, optimizer, lr_scheduler, postfix: Literal["img", "pcd"], **kwargs):
     """TODO: 换成 safe tensor 的形式"""
     save_path = os.path.join(output_dir, f"checkpoint-{epoch}-{postfix}.pth")
-    torch.save(
-        {
-            "epoch": epoch,
-            "unet": unet.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-        },
-        save_path,
-    )
+    save_dict = {
+        "epoch": epoch,
+        "unet": unet.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "lr_scheduler": lr_scheduler.state_dict(),
+    }
+    if postfix == "img":
+        save_dict["bottleneck_layer"] = kwargs["bottleneck_layer"].state_dict()
+    torch.save(save_dict, save_path)
     loguru_logger.success(f"将 {postfix} 模型保存在 {save_path}")
 
 
@@ -199,3 +203,13 @@ def get_change_fun(change_args: DictConfig):
         case _:
             raise ValueError(f"不支持的策略: {strategy}")
     return _change
+
+
+def init_logging(args):
+    logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    logfile_path = os.path.join(logging_dir, "{time:YYYY-MM-DD}.log")
+    writer = SummaryWriter(log_dir=logging_dir)
+    loguru_logger.remove()
+    loguru_logger.add(sys.stdout, level=args.get("logging_level", "DEBUG"))
+    loguru_logger.add(logfile_path, rotation="1 day")
+    return writer

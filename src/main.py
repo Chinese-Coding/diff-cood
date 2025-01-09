@@ -8,7 +8,7 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration
 from tqdm.auto import tqdm
 
-from main_utils import (
+from diffusion_utils import (
     enable_xformers_memory_efficient_attention,
     get_optimizer_class,
     init_datasloader,

@@ -3,12 +3,12 @@
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 import torch
-from torch import nn
-from efficientnet_pytorch import EfficientNet
-from torchvision.models.resnet import resnet101
 import torch.nn.functional as F
+from efficientnet_pytorch import EfficientNet
+from torch import nn
+from torchvision.models.resnet import resnet18, resnet101
+
 from opencood.utils.camera_utils import bin_depths
-from torchvision.models.resnet import resnet18
 
 
 class Up(nn.Module):

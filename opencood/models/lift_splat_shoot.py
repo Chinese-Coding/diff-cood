@@ -8,7 +8,7 @@ import torch.nn as nn
 from omegaconf import DictConfig
 
 from opencood.models.sub_modules.lss_submodule import BevEncode, CamEncode, CamEncode_Resnet101
-from opencood.utils.camera_utils import gen_dx_bx, cumsum_trick, QuickCumsum, depth_discretization
+from opencood.utils.camera_utils import QuickCumsum, cumsum_trick, depth_discretization, gen_dx_bx
 
 
 class LiftSplatShoot(nn.Module):
@@ -50,9 +50,7 @@ class LiftSplatShoot(nn.Module):
                 lss_args["use_depth_gt"],
                 lss_args["depth_supervision"],
             )
-        self.bevencode = BevEncode(self.camC, lss_args["outC"])
         self.camencode.to(device)
-        self.bevencode.to(device)
 
     def create_frustum(self):
         # make grid in image plane
@@ -216,5 +214,4 @@ class LiftSplatShoot(nn.Module):
 
         if self.depth_supervision:
             self.depth_items = depth_items
-        x = self.bevencode(x)  # 加入一个 bevencode 层之后, x: B * C * H * W (C 可以根据前面的参数指定)
         return x

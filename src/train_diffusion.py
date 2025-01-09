@@ -1,20 +1,20 @@
-"""不使用 accelerate, 同时进行某一层交换的 main 函数"""
+"""不使用 accelerate, 同时进行某一层交换的 train diffusion 函数"""
 
 import math
 
 import torch
 import torch.nn.functional as F
 from loguru import logger
-from omegaconf import DictConfig
-from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 from tqdm.auto import tqdm
 
 from data_related.entity import LiftSplatShootParams
-from main_utils import (
+from diffusion_utils import (
     enable_xformers_memory_efficient_attention,
     get_change_fun,
     get_optimizer_class,
     init_datasloader,
+    init_logging,
     init_modules,
     load_modules,
     save_modules,
@@ -26,14 +26,11 @@ from opencood.models.lift_splat_shoot import LiftSplatShoot
 
 
 def main(args):
-    logging_dir = os.path.join(args.output_dir, args.logging_dir)
-    logfile_path = os.path.join(logging_dir, "{time:YYYY-MM-DD}.log")
-    writer = SummaryWriter(log_dir=logging_dir)
-    logger.add(logfile_path, rotation="1 day")
+    writer = init_logging(args)
 
     _change = get_change_fun(args.change_args)
     optimizer_class = get_optimizer_class(args)
-    train_dataloader = init_datasloader(args)
+    train_dataloader = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf)
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -43,7 +40,7 @@ def main(args):
 
     """
     加载模型 (标注提示信息, 方便 IDE 提示)
-    简写说明: Img for Image (图像); Pcd for point cloud (点云, 缩写成三个字母, 而不是两个字母的 pc, 主要是为了和图像的缩写保持同样的长度, 这样看起来比较方便) 
+    简写说明: Img for Image (图像); Pcd for point cloud (点云, 缩写成三个字母, 而不是两个字母的 pc, 主要是为了和图像的缩写保持同样的长度, 这样看起来比较方便)
     """
     img_processor, img_optimizer, img_lr_scheduler = init_modules(
         args, ImgProcessor, optimizer_class
@@ -89,10 +86,24 @@ def main(args):
     img_processor.to(img_device, weight_dtype, True)
     pcd_processor.to(pcd_device, weight_dtype, True)
 
+    """LiftSplatShoot 模型和对应的降低通道数的卷积层"""
+    lss_model = LiftSplatShoot(args.lift_splat_shoot_args, img_device)
+    lss_model.load_state_dict(
+        torch.load(os.path.expanduser(args.lift_splat_shoot_args.pretrained_model_path), weights_only=False), strict=False
+    )
+    lss_model.eval()
+    lss_model.to(device=img_device)
+    bottleneck_layer = nn.Conv2d(128, 3, kernel_size=1)
+    # 这段代码是后面添加的, 为了不改变原来函数的调用接口, 这里再单独做一个判断,
+    # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
+    if "resume_file" in args:
+        bottleneck_layer.load_state_dict(torch.load(f"{args.resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
+    bottleneck_layer.to(device=img_device)
+
     global_step = 0
     progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=0, desc="Steps")
     logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epochs} 个 epoch")
-    lss_model = LiftSplatShoot(args.lift_splat_shoot, img_device)  # 新增一个模型用于处理图像
+
     for epoch in range(first_epoch, args.train_epochs):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
         for step, batch in enumerate(train_dataloader):
@@ -102,6 +113,13 @@ def main(args):
             img = lss_model(
                 lss_params.imgs, lss_params.rots, lss_params.trans, lss_params.intrins, lss_params.post_rots, lss_params.post_trans # fmt: skip
             )
+            img = bottleneck_layer(img)  # 降低通道数 (128 -> 3)
+            logger.debug(f"获得的输入 diffusion 的 shape: img({img.shape}) pcd({batch['pcd'].shape})")
+
+            """
+            现在 img 和 pcd 的 shape 都是: (B, 3, 512, 512)
+            只需要修改雷达监测范围以及生成体素的粒度就能改变 BEV 图的分辨率吗?
+            """
 
             """处理图像"""
             img_noise, img_params = img_processor.prepare(
@@ -122,8 +140,8 @@ def main(args):
 
             """交换空间 (这些东西以后写成超参数)"""
             img_sample, pcd_sample = img_params.sample.to("cpu"), pcd_params.sample.to("cpu")
-            # logger.debug(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
-            img_params.sample, pcd_params.sample = _change(img_sample, pcd_sample, args.change_config)
+            logger.debug(f"获得的中间层 Tensor 的 shape: img: {img_sample.shape}, pcd: {pcd_sample.shape}")
+            img_params.sample, pcd_params.sample = _change(img_sample, pcd_sample)
 
             """交换完之后的步骤, 开始走没走完的层"""
             img_params.to(img_device), pcd_params.to(pcd_device)
@@ -165,7 +183,15 @@ def main(args):
             global_step += 1
             progress_bar.set_postfix(**{**img_logs, **pcd_logs})
 
-        save_modules(args.output_dir, epoch, img_processor.unet, img_optimizer, img_lr_scheduler, "img")
+        save_modules(
+            args.output_dir,
+            epoch,
+            img_processor.unet,
+            img_optimizer,
+            img_lr_scheduler,
+            "img",
+            bottleneck_layer=bottleneck_layer,
+        )
         save_modules(args.output_dir, epoch, pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler, "pcd")
 
     writer.close()

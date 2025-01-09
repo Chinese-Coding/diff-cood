@@ -2,9 +2,9 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
+import torch
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, SkipValidation
-import torch
 
 
 class CAVData(BaseModel):

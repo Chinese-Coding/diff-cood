@@ -31,9 +31,8 @@ class DiffPostProcessor:
         self.train = train
 
         # 数据处理
-        ratio = postprocess_args.ratio
         range = self.cav_lidar_range  # 这个变量纯粹是为了下面代码能写短一点
-        vh, vw = ratio, ratio
+        vh, vw = postprocess_args.ratio, postprocess_args.ratio
         self.anchor_args.vw, self.anchor_args.vh = vh, vw
         self.anchor_args.W, self.anchor_args.H = math.ceil((range[3] - range[0]) / vw), math.ceil((range[4] - range[1]) / vh)
 
