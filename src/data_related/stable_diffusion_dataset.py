@@ -13,6 +13,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from data_related.entity import CAVData, PFTimestampData
+from opencood.data_utils.post_processor.diff_base_post_processor import DiffPostProcessor
 
 loader = yaml.Loader
 loader.add_implicit_resolver(
@@ -93,9 +94,9 @@ def _pcd_to_np(pcd_file: str, need_color=True):
 
 
 class StableDiffusionDataset(Dataset):
-    def __init__(self, root_dir):
-        logger.success(f"从 {root_dir} 中加载数据")
-        self.scenario_folders: List[Path] = sorted(folder for folder in Path(root_dir).iterdir() if folder.is_dir())
+    def __init__(self, args):
+        logger.success(f"从 {args.root_dir} 中加载数据")
+        self.scenario_folders: List[Path] = sorted(folder for folder in Path(args.root_dir).iterdir() if folder.is_dir())
 
         # Structure: {scenario_id : {cav_1 : {timestamp1 : {yaml: path,
         # lidar: path, cameras:list of path}}}}
@@ -114,6 +115,8 @@ class StableDiffusionDataset(Dataset):
             "Bird's-eye view projection of the right view of the point cloud image of a moving vehicle scanned by LiDAR",
             "Bird's-eye view projection of the rear view of the point cloud of a moving vehicle scanned with LiDAR",
         ]
+        self.postprocessor = DiffPostProcessor(args.postprocess_args)
+        self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -176,12 +179,22 @@ class StableDiffusionDataset(Dataset):
     def collate_fn(self, batches: List[CAVData]):
         camera_data, lidar_np, img_inputs_ids, pcd_inputs_ids = [], [], [], []
         lidar_splitted_list = []
+        pos_equal_one_list, neg_equal_one_list, targets_list = [], [], []
         for batch in batches:
             camera_data.append(torch.stack(self.img_transform(batch.camera_data)))
             lidar_np.append(self.pcd_transform(batch.lidar_np))
             img_inputs_ids.append(self._get_inputs_ids(self.img_captions))
             pcd_inputs_ids.append(self._get_inputs_ids(self.pcd_captions))
             lidar_splitted_list.append(torch.stack(self.pcd_transform(batch.lidar_splitted)))
+
+            # 目标检测所需的参数
+            object_np, mask, _ = self.postprocessor.generate_object_center_lidar(batch, batch.cav_info["lidar_pose"])
+            pos_equal_one, neg_equal_one, targets = self.postprocessor.generate_label(
+                object_np, self.anchor_boxes, mask, return_dict=False
+            )
+            pos_equal_one_list.append(torch.tensor(pos_equal_one))
+            neg_equal_one_list.append(torch.tensor(neg_equal_one))
+            targets_list.append(torch.tensor(targets))
 
         return {
             # camera shape: (batch, 4, 3, W, H), 这个 4 是每个车有四个相机
@@ -190,6 +203,10 @@ class StableDiffusionDataset(Dataset):
             "pcd": torch.stack(lidar_splitted_list),
             "img_inputs_ids": torch.stack(img_inputs_ids),
             "pcd_inputs_ids": torch.stack(pcd_inputs_ids),
+            # 目标检测所需的参数
+            "pos_equal_one": torch.stack(pos_equal_one_list),
+            "neg_equal_one": torch.stack(neg_equal_one_list),
+            "targets": torch.stack(targets_list),
         }
 
     def set_transform(self, img_transform, pcd_transform):

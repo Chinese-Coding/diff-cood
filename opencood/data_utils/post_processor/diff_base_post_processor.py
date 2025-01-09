@@ -127,7 +127,7 @@ class DiffPostProcessor:
 
         return anchors
 
-    def generate_label(self, object_bbx_center, anchor_boxes, object_bbx_mask):
+    def generate_label(self, object_bbx_center, anchor_boxes, object_bbx_mask, return_dict=True):
         """生成标签"""
         assert self.order == "hwl", "Currently Voxel only supporthwl bbx order."
 
@@ -202,5 +202,7 @@ class DiffPostProcessor:
         # to avoid a box be pos/neg in the same time
         index_x, index_y, index_z = np.unravel_index(id_highest, (*feature_map_shape, self.anchor_num))
         neg_equal_one[index_x, index_y, index_z] = 0
-
-        return {"pos_equal_one": pos_equal_one, "neg_equal_one": neg_equal_one, "targets": targets}
+        if return_dict:
+            return {"pos_equal_one": pos_equal_one, "neg_equal_one": neg_equal_one, "targets": targets}
+        else:
+            return pos_equal_one, neg_equal_one, targets

@@ -6,6 +6,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from diffusers.optimization import get_scheduler
 from loguru import logger as loguru_logger
+from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
@@ -36,7 +37,7 @@ def init_datasloader(args):
         revision=args.revision,
         use_fast=False,
     )
-    train_dataset = StableDiffusionDataset(args.root_dir)
+    train_dataset = StableDiffusionDataset(args)
     train_dataset.reinitialize()
     train_dataset.set_transform(img_transform(), pcd_transform(args.cav_lidar_range))
     train_dataset.set_tokenizer(tokenizer)
@@ -170,3 +171,30 @@ def load_modules(resume_file, unet, optimizer, lr_scheduler):
     optimizer.load_state_dict(checkpoint["optimizer"])
     lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
     return checkpoint["epoch"]
+
+
+def get_change_fun(change_args: DictConfig):
+    patch_size, strategy = change_args.get("patch_size", 5), change_args.get("strategy", "random")
+    match strategy:
+        case "fixed":
+
+            def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
+                img, pcd = img_sample[:, :, :patch_size, :patch_size], pcd_sample[:, :, :patch_size, :patch_size]
+                img_sample[:, :, :patch_size, :patch_size], pcd_sample[:, :, :patch_size, :patch_size] = pcd, img
+                return img_sample, pcd_sample
+
+        case "random":
+
+            def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
+                start_h, start_w = (
+                    torch.randint(0, img_sample.shape[2] - patch_size, (1,)).item(),
+                    torch.randint(0, img_sample.shape[3] - patch_size, (1,)).item(),
+                )
+                end_h, end_w = start_h + patch_size, start_w + patch_size
+                img, pcd = img_sample[:, :, start_h:end_h, start_w:end_w], pcd_sample[:, :, start_h:end_h, start_w:end_w]
+                img_sample[:, :, start_h:end_h, start_w:end_w], pcd_sample[:, :, start_h:end_h, start_w:end_w] = pcd, img
+                return img_sample, pcd_sample
+
+        case _:
+            raise ValueError(f"不支持的策略: {strategy}")
+    return _change

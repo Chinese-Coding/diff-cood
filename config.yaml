@@ -64,7 +64,7 @@ postprocess_args:
     pos_threshold: 0.6
     neg_threshold: 0.45
     score_threshold: 0.2
-  dir_args:
+  dir_args: &dir_args
     dir_offset: 0.7853
     num_bins: 2
     anchor_yaw: *anchor_yaw
@@ -77,3 +77,20 @@ t: 261 # 参考 diff 选择一个时间戳
 change_args:
   patch_size: 5
   strategy: random
+
+loss_args:
+  pos_cls_weight: 2.0
+  cls_args:
+    type: 'SigmoidFocalLoss' # 没用
+    alpha: 0.25
+    gamma: 2.0
+    weight: 1.0
+  reg_args:
+    type: 'WeightedSmoothL1Loss' # 没用
+    sigma: 3.0
+    codewise: true
+    weight: 2.0
+  dir_args:
+    type: 'WeightedSoftmaxClassificationLoss' # 没用
+    weight: 0.2
+    args: *dir_args

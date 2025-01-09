@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 
 from main_utils import (
     enable_xformers_memory_efficient_attention,
+    get_change_fun,
     get_optimizer_class,
     init_datasloader,
     init_modules,
@@ -22,40 +23,13 @@ from modules.layering_unet_2dc_model import LayeringUNet2DCModel, LayeringUNet2D
 from modules.pcd_processor import PcdProcessor
 
 
-def _get_change_fun(change_args: DictConfig):
-    patch_size, strategy = change_args.get("patch_size", 5), change_args.get("strategy", "random")
-    match strategy:
-        case "fixed":
-
-            def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
-                img, pcd = img_sample[:, :, :patch_size, :patch_size], pcd_sample[:, :, :patch_size, :patch_size]
-                img_sample[:, :, :patch_size, :patch_size], pcd_sample[:, :, :patch_size, :patch_size] = pcd, img
-                return img_sample, pcd_sample
-
-        case "random":
-
-            def _change(img_sample: torch.Tensor, pcd_sample: torch.Tensor):
-                start_h, start_w = (
-                    torch.randint(0, img_sample.shape[2] - patch_size, (1,)).item(),
-                    torch.randint(0, img_sample.shape[3] - patch_size, (1,)).item(),
-                )
-                end_h, end_w = start_h + patch_size, start_w + patch_size
-                img, pcd = img_sample[:, :, start_h:end_h, start_w:end_w], pcd_sample[:, :, start_h:end_h, start_w:end_w]
-                img_sample[:, :, start_h:end_h, start_w:end_w], pcd_sample[:, :, start_h:end_h, start_w:end_w] = pcd, img
-                return img_sample, pcd_sample
-
-        case _:
-            raise ValueError(f"不支持的策略: {strategy}")
-    return _change
-
-
 def main(args):
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     logfile_path = os.path.join(logging_dir, "{time:YYYY-MM-DD}.log")
     writer = SummaryWriter(log_dir=logging_dir)
     logger.add(logfile_path, rotation="1 day")
 
-    _change = _get_change_fun(args.change_args)
+    _change = get_change_fun(args.change_args)
     optimizer_class = get_optimizer_class(args)
     train_dataloader = init_datasloader(args)
 

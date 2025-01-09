@@ -31,7 +31,7 @@ class LayeringUNet2DCParams(BaseModel):
     lora_scale: float = 1.0
     down_block_res_samples: Optional[list] = None
 
-    # 推理时保留的的 UP 层的参数
+    # 目标检测时保留的的 UP 层的参数
     preserved_up_indices: Optional[List[int]] = None
     preserved_up_feature: Optional[Dict[int, torch.Tensor]] = None
 
