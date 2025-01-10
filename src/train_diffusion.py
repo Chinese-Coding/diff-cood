@@ -26,6 +26,11 @@ from opencood.models.lift_splat_shoot import LiftSplatShoot
 
 
 def main(args):
+    # 路径展开
+    args.output_dir = os.path.expanduser(args.output_dir)
+    args.pretrained_model = os.path.expanduser(args.pretrained_model)
+    args.control_model = os.path.expanduser(args.control_model)
+
     writer = init_logging(args)
 
     _change = get_change_fun(args.change_args)
@@ -54,8 +59,9 @@ def main(args):
     """加载权重 (上面那个是预训练权重, 下面这个是自己的权重)"""
     first_epoch, img_loss, pcd_loss = 0, 0, 0  # 为保存权重特地将变量声明到前面
     if "resume_file" in args:
-        img_epoch = load_modules(f"{args.resume_file}-img.pth", img_processor.unet, img_optimizer, img_lr_scheduler)
-        pcd_epoch = load_modules(f"{args.resume_file}-pcd.pth", pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler)
+        resume_file = os.path.expanduser(args.resume_file)
+        img_epoch = load_modules(f"{resume_file}-img.pth", img_processor.unet, img_optimizer, img_lr_scheduler)
+        pcd_epoch = load_modules(f"{resume_file}-pcd.pth", pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler)
         assert (
             img_epoch == pcd_epoch
         )  # 检查一下两个 epoch 相等 (虽然 assert 可以选择关闭, 但是一行检查代码写起来简单, 而且一般也不会关闭)
@@ -94,10 +100,13 @@ def main(args):
     lss_model.eval()
     lss_model.to(device=img_device)
     bottleneck_layer = nn.Conv2d(128, 3, kernel_size=1)
+    img_optimizer.add_param_group(
+        {"params": bottleneck_layer.parameters()}
+    )  # 增加了一个新的卷积层, 别忘了把他添加到 optimizer 里面
     # 这段代码是后面添加的, 为了不改变原来函数的调用接口, 这里再单独做一个判断,
     # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
     if "resume_file" in args:
-        bottleneck_layer.load_state_dict(torch.load(f"{args.resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
+        bottleneck_layer.load_state_dict(torch.load(f"{resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
     bottleneck_layer.to(device=img_device)
 
     global_step = 0
@@ -183,15 +192,12 @@ def main(args):
             global_step += 1
             progress_bar.set_postfix(**{**img_logs, **pcd_logs})
 
+        # fmt: off
         save_modules(
-            args.output_dir,
-            epoch,
-            img_processor.unet,
-            img_optimizer,
-            img_lr_scheduler,
-            "img",
-            bottleneck_layer=bottleneck_layer,
+            args.output_dir, epoch, img_processor.unet, img_optimizer, img_lr_scheduler,
+            "img", bottleneck_layer=bottleneck_layer
         )
+        # fmt: on
         save_modules(args.output_dir, epoch, pcd_processor.unet, pcd_optimizer, pcd_lr_scheduler, "pcd")
 
     writer.close()
@@ -202,5 +208,5 @@ if __name__ == "__main__":
 
     from omegaconf import OmegaConf
 
-    args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/config.yaml"))
+    args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
     main(args)

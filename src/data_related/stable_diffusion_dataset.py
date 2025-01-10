@@ -13,7 +13,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from data_related.entity import CAVData, LiftSplatShootParams, PFTimestampData
-from opencood.data_utils.post_processor.diff_base_post_processor import DiffPostProcessor
+from opencood.data_utils.post_processor.diff_post_processor import DiffPostProcessor
 from opencood.utils.camera_utils import img_to_tensor  # 如果以后添加对深度图的处理, 这个函数会用到, 因此先不删除
 from opencood.utils.camera_utils import img_transform, normalize_img, sample_augmentation
 from opencood.utils.transformation_utils import x1_to_x2
@@ -98,6 +98,7 @@ def _pcd_to_np(pcd_file: str, need_color=True):
 
 class StableDiffusionDataset(Dataset):
     def __init__(self, args):
+        self.mode = args.mode  # 模式指的是训练 diffusion 还是 detection
         logger.success(f"从 {args.root_dir} 中加载数据")
         self.scenario_folders: List[Path] = sorted(folder for folder in Path(args.root_dir).iterdir() if folder.is_dir())
 
@@ -109,8 +110,9 @@ class StableDiffusionDataset(Dataset):
         self.img_captions = [""]
         self.pcd_captions = [""]
 
-        self.postprocessor = DiffPostProcessor(args.postprocess_args)
-        self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
+        if self.mode == "detection":
+            self.postprocessor = DiffPostProcessor(args.postprocess_args)
+            self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -171,8 +173,8 @@ class StableDiffusionDataset(Dataset):
         ).input_ids
 
     def collate_fn(self, batches: List[CAVData]):
+        """增加了一个 `mode` 参数, 这个函数里面为了增加了很多对于这个变量的判断,"""
         camera_data, lidar_np, img_inputs_ids, pcd_inputs_ids = [], [], [], []
-        pos_equal_one_list, neg_equal_one_list, targets_list = [], [], []
         batch_lss_params = []
 
         for batch in batches:
@@ -182,27 +184,31 @@ class StableDiffusionDataset(Dataset):
             pcd_inputs_ids.append(self._get_inputs_ids(self.pcd_captions))
             batch_lss_params.append(self.get_lift_splat_shoot_inputs(self.data_aug_conf, batch, False))
 
-            # 目标检测所需的参数
-            object_np, mask, _ = self.postprocessor.generate_object_center_lidar(batch, batch.cav_info["lidar_pose"])
-            pos_equal_one, neg_equal_one, targets = self.postprocessor.generate_label(
-                object_np, self.anchor_boxes, mask, return_dict=False
-            )
-            pos_equal_one_list.append(torch.tensor(pos_equal_one))
-            neg_equal_one_list.append(torch.tensor(neg_equal_one))
-            targets_list.append(torch.tensor(targets))
-
-        return {
-            # camera shape: (batch, 4, 3, W, H), 这个 4 是每个车有四个相机
+        ret = {
             "img": torch.stack(camera_data),
             "pcd": torch.stack(lidar_np),
             "img_inputs_ids": torch.stack(img_inputs_ids),
             "pcd_inputs_ids": torch.stack(pcd_inputs_ids),
-            # 目标检测所需的参数
-            "pos_equal_one": torch.stack(pos_equal_one_list),
-            "neg_equal_one": torch.stack(neg_equal_one_list),
-            "targets": torch.stack(targets_list),
             "lss_params": LiftSplatShootParams.collate_fn(batch_lss_params),
         }
+
+        if self.mode == "detection":
+            pos_equal_one_list, neg_equal_one_list, targets_list = [], [], []
+            for batch in batches:
+                # 目标检测所需的参数
+                object_np, mask, _ = self.postprocessor.generate_object_center_lidar(batch, batch.cav_info["lidar_pose"])
+                pos_equal_one, neg_equal_one, targets = self.postprocessor.generate_label(
+                    object_np, self.anchor_boxes, mask, return_dict=False
+                )
+                pos_equal_one_list.append(torch.tensor(pos_equal_one))
+                neg_equal_one_list.append(torch.tensor(neg_equal_one))
+                targets_list.append(torch.tensor(targets))
+
+            ret["pos_equal_one"] = torch.stack(pos_equal_one_list)
+            ret["neg_equal_one"] = torch.stack(neg_equal_one_list)
+            ret["targets"] = torch.stack(targets_list)
+
+        return ret
 
     def set_transform(self, img_transform, pcd_transform):
         self.img_transform = img_transform

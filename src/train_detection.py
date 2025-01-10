@@ -13,6 +13,10 @@ from opencood.models.lift_splat_shoot import LiftSplatShoot
 
 
 def main(args):
+    # 路径展开
+    args.output_dir = os.path.expanduser(args.output_dir)
+    args.pretrained_model = os.path.expanduser(args.pretrained_model)
+    args.control_model = os.path.expanduser(args.control_model)
     writer = init_logging(args)
 
     # 没有看错, 这里先加载 train 数据集, 因为针对目标检测任务还是在 train 数据集上进行训练
@@ -27,7 +31,8 @@ def main(args):
 
     """加载权重"""
     if "resume_file" in args:
-        img_checkpoint, pcd_checkpoint = torch.load(f"{args.resume_file}-img.pth", weights_only=False), torch.load(
+        resume_file = os.path.expanduser(args.resume_file)
+        img_checkpoint, pcd_checkpoint = torch.load(f"{resume_file}-img.pth", weights_only=False), torch.load(
             f"{args.resume_file}-pcd.pth", weights_only=False
         )
         # 检查一下两个 epoch 相等 (虽然 assert 可以选择关闭, 但是一行检查代码写起来简单, 而且一般也不会关闭)
@@ -35,7 +40,8 @@ def main(args):
         img_processor.unet.load_state_dict(img_checkpoint["unet"])
         pcd_processor.unet.load_state_dict(pcd_checkpoint["unet"])
         logger.success(f"从 {args.resume_file} 中加载 img 和 pcd 模型")
-
+    else:
+        logger.warning("没有指定 resume_file, 将使用最原始的预训练的 diffusion 模型")
     """显存优化部分"""
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
     weight_dtype = torch.float32
@@ -71,7 +77,7 @@ def main(args):
     # 这段代码是后面添加的, 为了不改变原来函数的调用接口, 这里再单独做一个判断,
     # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
     if "resume_file" in args:
-        bottleneck_layer.load_state_dict(torch.load(f"{args.resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
+        bottleneck_layer.load_state_dict(torch.load(f"{resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
     bottleneck_layer.to(device=img_device)
 
     """目标检测部分"""
@@ -81,13 +87,15 @@ def main(args):
     )  # TODO: 这个上采用层用来把提取到的特征上采样到适用于 anchor 的分辨率
     loss_fn = PointPillarLoss(args.loss_args)
     # 优化器参数从 HEAL 中的某个配置文件抄过来的, TODO: 应该写成超参数的形式
-    optimizer = torch.optim.Adam(detection_head.parameters(), lr=0.002, eps=1e-10, weight_decay=1e-4)
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[15, 25], gamma=0.1)
+    optimizer = torch.optim.Adam(
+        detection_head.parameters(), lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=args.adam_weight_decay
+    )
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_milestones, gamma=args.lr_gamma)
 
     first_epoch = 0
     if "resume_file_det" in args:
         # 这个就是直接指定文件了, 而不是像 diffusion 那样需要指定文件名前缀
-        checkpoint = torch.load(args.resume_file_det, weights_only=False)
+        checkpoint = torch.load(os.path.expanduser(args.resume_file_det), weights_only=False)
         first_epoch = checkpoint["epoch"] + 1
         detection_head.load_state_dict(checkpoint["detection_head"])
         unsample_layer.load_state_dict(checkpoint["unsample_layer"])
@@ -97,7 +105,7 @@ def main(args):
     detection_head.to(img_device)  # 和图片是用一张显卡, 因为图片那部分占用的现存比较小
     unsample_layer.to(img_device)
     """开始推理"""
-    for epoch in range(first_epoch, 10):  # TODO: 这里的训练次数应该写成超参数
+    for epoch in range(first_epoch, args.train_epochs):  # TODO: 这里的训练次数应该写成超参数
         logger.success(f"第 {epoch} 个 epoch 开始训练")
         for step, batch in enumerate(train_dataloader):
             """预处理图像, 把图像处理为 BEV 图"""
@@ -113,7 +121,7 @@ def main(args):
             _, img_params = img_processor.prepare(
                 img.to(img_device), batch["img_inputs_ids"].to(img_device), False, args.t
             )  # type: torch.Tensor, LayeringUNet2DCParams
-            img_params.preserved_up_indices = args.preserved_up_indices
+            img_params.preserved_up_indices = args.preserved_up_indices  # 相比 diffusion 多了这一步
             img_params.to(img_device)
             img_unet: LayeringUNet2DCModel = img_processor.unet
             img_params = img_unet.forward_control(img_unet.forward_down(img_unet.forward_pre(img_params)))
@@ -122,7 +130,7 @@ def main(args):
             _, pcd_params = pcd_processor.prepare(
                 batch["pcd"].to(pcd_device), batch["pcd_inputs_ids"].to(pcd_device), False, args.t
             )  # type: torch.Tensor, LayeringUNet2DCParams
-            pcd_params.preserved_up_indices = args.preserved_up_indices
+            pcd_params.preserved_up_indices = args.preserved_up_indices  # 相比 diffusion 多了这一步
             pcd_params.to(pcd_device)
             pcd_unet: LayeringUNet2DCModel = pcd_processor.unet
             pcd_params = pcd_unet.forward_control(pcd_unet.forward_down(pcd_unet.forward_pre(pcd_params)))
@@ -174,5 +182,5 @@ if __name__ == "__main__":
 
     from omegaconf import OmegaConf
 
-    args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/config.yaml"))
+    args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
     main(args)

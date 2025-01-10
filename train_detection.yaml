@@ -1,5 +1,7 @@
-# TODO: 给配置文件分层, 都平铺是不是不太好?
-# TODO: 把 diffusion 和 detection 的参数分开
+mode: detection # 设定训练模式
+layering: True # 是否使用 `LayeringUNet2dConditionModel`
+logging_level: INFO
+
 # 和路径有关的一系列参数
 pretrained_model: ~/Desktop/stable-diffusion-2-1-base
 control_model: ~/Desktop/controlnet-sd21-depth-diffusers
@@ -7,48 +9,72 @@ revision: null
 output_dir: ~/Desktop/logs/controlnet
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
+
+# 加载 checkpoint 的参数 (detection 模式下应该使用预训练好的针对 OPV2V 数据集的 diffusion 模型)
 # resume_file: /home/zfq/Desktop/logs/controlnet/checkpoint-0
 # resume_file_det: /home/zfq/Desktop/logs/detection/checkpoint-0-det.pth
 
-resume_from_checkpoint: null
-layering: True # 是否使用 `LayeringUNet2dConditionModel`
-logging_level: INFO
-
-# 训练有关的配置文件
+# 显存优化
 # 显存优化方面的参数 (不包括 batch size, 虽然设置较小的 batch size 有助于降低显存占用)
-use_8bit_adam: true
 enable_xformers_memory_efficient_attention: true
 gradient_checkpointing: true
 allow_tf32: true
 mixed_precision: fp16
 
 batch_size: 1
-gradient_accumulation_steps: 1
-report_to: tensorboard
-max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
 train_epochs: 10
-resolution: 512
 num_workers: 4
-checkpointing_steps: 500
-checkpoints_total_limit: 10 # 这里还是设置的小一点为妙, 不然太占存储空间了
+
+# 优化器有关参数 (都是从 HEAL 抄的)
+learning_rate: 0.002
+adam_epsilon: 1e-10
+adam_weight_decay: 1e-4
+
+# 学习率调度器有关参数 (都是从 HEAL 抄的)
+lr_scheduler: MultiStepLR
+lr_milestones: [15, 25]
+lr_gamma: 0.1
 
 
-# 优化器有关参数 (大部分都是根据 `train_controlnet` 写的)
-learning_rate: 5e-6
-adam_beta1: 0.9
-adam_beta2: 0.999
-adam_weight_decay: 1e-2
-adam_epsilon: 1e-08
-lr_scheduler: constant
-lr_warmup_steps: 500
-lr_num_cycles: 1
-lr_power: 1.0
-set_grads_to_none: true
-max_grad_norm: 1.0
-
-# TODO: 这里的参数是否需要和下面 lift_splat_shoot_args 的参数一致
+# TODO: 这里的参数是否需要和 lift_splat_shoot_args 的参数一致
 cav_lidar_range: &cav_lidar_range [-51.2, -51.2, -3, 51.2, 51.2, 1]
 ratio: &ratio 0.2
+
+# LiftSplatShoot 模型需要的参数
+lift_splat_shoot_args:
+  grid_conf:
+      xbound: [-51.2, 51.2, 0.2]   # Limit the range of the x direction and divide the grids
+      ybound: [-51.2, 51.2, 0.2]   # Limit the range of the y direction and divide the grids
+      zbound: [-10, 10, 20.0]   # Limit the range of the z direction and divide the grids
+      ddiscr: [2, 50, 48]
+      mode: 'LID'
+  data_aug_conf: # 数据增强所需的参数
+      resize_lim: [0.65, 0.7]
+      final_dim: [384, 512]
+      rot_lim: [-3.6, 3.6]
+      H: 600
+      W: 800
+      rand_flip: False
+      bot_pct_lim: [0.0, 0.05]
+      cams: ['camera0', 'camera1', 'camera2', 'camera3']
+      Ncams: 4
+  img_downsample: 8
+  img_features: 128
+  use_depth_gt: false
+  # HEAL 配置文件这里是 true, 但是我们还没有加载 depth 数据, 所以这里先设置为 false
+  # 还有一个考虑: 因为使用的是预训练模型, 所以实际上不需要深度信息作为监督信号
+  depth_supervision: false
+  camera_encoder: EfficientNet
+  pretrained_model_path: ~/fleet/diff-cood/checkpoints/net_epoch25.pth
+
+# 特征交换有关的参数
+change_args:
+  patch_size: 5
+  strategy: random
+
+# 下面是 detection 特有的参数
+preserved_up_indices: [0, 1, 2, 3] # 选择保留的 up 层的索引
+t: 261 # 选择一个时间戳
 
 postprocess_args:
   order: hwl
@@ -73,41 +99,6 @@ postprocess_args:
     dir_offset: 0.7853
     num_bins: 2
     anchor_yaw: *anchor_yaw
-
-# LiftSplatShoot 模型需要的参数
-lift_splat_shoot_args:
-  grid_conf:
-      xbound: [-51.2, 51.2, 0.2]   # Limit the range of the x direction and divide the grids
-      ybound: [-51.2, 51.2, 0.2]   # Limit the range of the y direction and divide the grids
-      zbound: [-10, 10, 20.0]   # Limit the range of the z direction and divide the grids
-      ddiscr: [2, 50, 48]
-      mode: 'LID'
-  data_aug_conf: # 数据增强所需的参数
-      resize_lim: [0.65, 0.7]
-      final_dim: [384, 512]
-      rot_lim: [-3.6, 3.6]
-      H: 600
-      W: 800
-      rand_flip: False
-      bot_pct_lim: [0.0, 0.05]
-      cams: ['camera0', 'camera1', 'camera2', 'camera3']
-      Ncams: 4
-  img_downsample: 8
-  img_features: 128
-  use_depth_gt: false
-  depth_supervision: false # HEAL 配置文件这里是 true, 但是我们还没有加载 depth 数据, 所以这里先设置为 false
-  camera_encoder: EfficientNet
-  pretrained_model_path: ~/fleet/diff-cood/checkpoints/net_epoch25.pth
-
-
-# 推理有关的参数
-preserved_up_indices: [0, 1, 2, 3]
-t: 261 # 参考 diff 选择一个时间戳
-
-# 特征交换有关的参数
-change_args:
-  patch_size: 5
-  strategy: random
 
 loss_args:
   pos_cls_weight: 2.0
