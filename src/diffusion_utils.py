@@ -211,5 +211,5 @@ def init_logging(args):
     writer = SummaryWriter(log_dir=logging_dir)
     loguru_logger.remove()
     loguru_logger.add(sys.stdout, level=args.get("logging_level", "DEBUG"))
-    loguru_logger.add(logfile_path, rotation="1 day")
+    loguru_logger.add(logfile_path, rotation="1 day", level=args.get("logging_level", "DEBUG"))
     return writer

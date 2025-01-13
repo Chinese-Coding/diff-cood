@@ -126,9 +126,6 @@ class StableDiffusionDataset(Dataset):
             # 以免出现 `IndexError: list index out of range` (为了这么点问题, 又多写了那么多行注释)
             if scenario_folder.parts[-1] == "2021_09_09_13_20_58":  # 这个时刻下的数据都只有三个 camera.
                 continue
-            # 这三个文件夹下的点云还没有分割完
-            if scenario_folder.parts[-1] in ["2021_09_09_22_21_11", "2021_09_09_23_21_21", "2021_09_10_12_07_11"]:
-                continue
             # at least 1 cav should show up
             # 用三元运算符来简化判断 (使用 sample 函数代替原先的 shuffle 函数, 因为sample函数有返回值写起来比较统一, 不知道应不影响性能)
             cav_list: List[str] = [cav.name for cav in scenario_folder.iterdir() if cav.is_dir()]
@@ -279,7 +276,8 @@ class StableDiffusionDataset(Dataset):
             # else:
             #     depth_img = None
             # TODO: 增加 `self.train` 这个参数
-            resize, resize_dims, crop, flip, rotate = sample_augmentation(data_aug_conf, True)
+            #       因为 `lift splat shoot` 使用了预训练模型, 所以不需要数据增强
+            resize, resize_dims, crop, flip, rotate = sample_augmentation(data_aug_conf, False)
             img_src, post_rot2, post_tran2 = img_transform(
                 img_src, post_rot, post_tran, resize, resize_dims, crop, flip, rotate
             )

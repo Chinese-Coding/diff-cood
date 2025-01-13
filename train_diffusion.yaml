@@ -6,7 +6,7 @@ logging_level: INFO
 pretrained_model: /home/zfq/Desktop/stable-diffusion-2-1-base
 control_model: /home/zfq/Desktop/controlnet-sd21-depth-diffusers
 revision: null
-output_dir: /home/zfq/Desktop/logs/controlnet
+output_dir: /home/zfq/Desktop/logs/diffusion
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
 
@@ -22,7 +22,7 @@ gradient_checkpointing: true
 allow_tf32: true
 mixed_precision: fp16
 
-batch_size: 1
+batch_size: 2
 train_epochs: 10
 max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
 num_workers: 4

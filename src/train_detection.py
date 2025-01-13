@@ -33,7 +33,7 @@ def main(args):
     if "resume_file" in args:
         resume_file = os.path.expanduser(args.resume_file)
         img_checkpoint, pcd_checkpoint = torch.load(f"{resume_file}-img.pth", weights_only=False), torch.load(
-            f"{args.resume_file}-pcd.pth", weights_only=False
+            f"{resume_file}-pcd.pth", weights_only=False
         )
         # 检查一下两个 epoch 相等 (虽然 assert 可以选择关闭, 但是一行检查代码写起来简单, 而且一般也不会关闭)
         assert img_checkpoint["epoch"] == pcd_checkpoint["epoch"]
@@ -42,6 +42,7 @@ def main(args):
         logger.success(f"从 {args.resume_file} 中加载 img 和 pcd 模型")
     else:
         logger.warning("没有指定 resume_file, 将使用最原始的预训练的 diffusion 模型")
+
     """显存优化部分"""
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
     weight_dtype = torch.float32
@@ -58,7 +59,7 @@ def main(args):
     if args.enable_xformers_memory_efficient_attention:
         enable_xformers_memory_efficient_attention(img_processor, pcd_processor)
 
-    if args.gradient_checkpointing:
+    if args.get("gradient_checkpointing", False): # 训练 diffusion 的时候会用到
         img_processor.enable_gradient_checkpointing()
         pcd_processor.enable_gradient_checkpointing()
 
@@ -78,7 +79,8 @@ def main(args):
     # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
     if "resume_file" in args:
         bottleneck_layer.load_state_dict(torch.load(f"{resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
-    bottleneck_layer.to(device=img_device)
+        bottleneck_layer.eval()
+        logger.success(f"从 {args.resume_file} 中加载 bottleneck_layer 模型")
 
     """目标检测部分"""
     detection_head = DetectionHead(args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args)
@@ -101,9 +103,24 @@ def main(args):
         unsample_layer.load_state_dict(checkpoint["unsample_layer"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        logger.success(f"从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler")
+        """
+        先用 diffusion 在 OPV2V 数据集进行预训练, 再将其用于目标检测任务, loss 为 nan (推理过程中 sample 变为 nan)
+        单纯训练 diffusion 的时候 loss 也会变成 nan, 是预训练的太好了吗?
+        于是我想要直接改成直接加载 diffusion 预训练的权重, 而不经过 OPV2V 数据集的预训练, 所以 `bottleneck_layer` 也变成目标检测任务的权重
+        """
+        if "bottleneck_layer" in checkpoint:
+            bottleneck_layer.load_state_dict(checkpoint["bottleneck_layer"])
+            logger.success(f"从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler 以及 bottleneck_layer")
+        else:
+            logger.warning("没有从 `resume_file` 或 `resume_file_det`中加载 `bottleneck_layer`, 使用随机初始化的权重")
+            logger.success("从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler")
+
+    detection_head.train()
+    unsample_layer.train()
+    bottleneck_layer.train()
     detection_head.to(img_device)  # 和图片是用一张显卡, 因为图片那部分占用的现存比较小
     unsample_layer.to(img_device)
+    bottleneck_layer.to(img_device)
     """开始推理"""
     for epoch in range(first_epoch, args.train_epochs):  # TODO: 这里的训练次数应该写成超参数
         logger.success(f"第 {epoch} 个 epoch 开始训练")
@@ -145,7 +162,7 @@ def main(args):
                 pcd_unet.forward_middle(pcd_params)
             )
 
-            img_feature, pcd_feature = img_params.preserved_up_feature, pcd_params.preserved_up_feature
+            pcd_feature = pcd_params.preserved_up_feature
             # for i in args.preserved_up_indices:
             #     logger.debug(f"第 {i} 层的 feature shape. img({img_feature[i].shape}), pcd: ({pcd_feature[i].shape})")
             """取点云, 上采样层中的第 4 层作为目标检测使用的特征"""
@@ -163,15 +180,17 @@ def main(args):
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
-
+        save_dict = {
+            "epoch": epoch,
+            "detection_head": detection_head.state_dict(),
+            "unsample_layer": unsample_layer.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "lr_scheduler": lr_scheduler.state_dict(),
+        }
+        if "resume_file" not in args:
+            save_dict["bottleneck_layer"] = bottleneck_layer.state_dict()
         torch.save(
-            {
-                "epoch": epoch,
-                "detection_head": detection_head.state_dict(),
-                "unsample_layer": unsample_layer.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "lr_scheduler": lr_scheduler.state_dict(),
-            },
+            save_dict,
             f"{args.output_dir}/checkpoint-{epoch}-det.pth",
         )
     writer.close()

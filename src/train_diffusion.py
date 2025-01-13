@@ -107,6 +107,7 @@ def main(args):
     # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
     if "resume_file" in args:
         bottleneck_layer.load_state_dict(torch.load(f"{resume_file}-img.pth", weights_only=False)["bottleneck_layer"])
+    bottleneck_layer.train()
     bottleneck_layer.to(device=img_device)
 
     global_step = 0
