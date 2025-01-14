@@ -35,8 +35,8 @@ def main(args):
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
-        args.max_train_steps = args.train_epochs * num_update_steps_per_epoch
-        args.train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+        args.max_train_steps = args.train_epoches * num_update_steps_per_epoch
+        args.train_epoches = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     """加载模型"""
     img_accelerator, img_processor, img_optimizer, img_lr_scheduler = init_modules(
@@ -84,7 +84,7 @@ def main(args):
         disable=not (img_accelerator.is_local_main_process and pcd_accelerator.is_main_process),
     )
     first_epoch = 0
-    for epoch in range(first_epoch, args.train_epochs):
+    for epoch in range(first_epoch, args.train_epoches):
         for step, batch in enumerate(train_dataloader):
             with img_accelerator.accumulate(img_processor.unet), pcd_accelerator.accumulate(pcd_processor.unet):
                 img_noise, img_noise_pred = img_processor(

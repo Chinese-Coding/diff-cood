@@ -21,7 +21,7 @@ allow_tf32: true
 mixed_precision: fp32
 
 batch_size: 2
-train_epochs: 10
+train_epoches: 10
 num_workers: 4
 
 # 优化器有关参数 (都是从 HEAL 抄的)

@@ -3,16 +3,16 @@ layering: True # 是否使用 `LayeringUNet2dConditionModel`
 logging_level: INFO
 
 # 和路径有关的一系列参数
-pretrained_model: /home/zfq/Desktop/stable-diffusion-2-1-base
-control_model: /home/zfq/Desktop/controlnet-sd21-depth-diffusers
+pretrained_model: ~/Desktop/stable-diffusion-2-1-base
+control_model: ~/Desktop/controlnet-sd21-depth-diffusers
 revision: null
-output_dir: /home/zfq/Desktop/logs/diffusion
+output_dir: ~/Desktop/logs/diffusion
 logging_dir: logging_dir
 root_dir: /datasets/OPV2V/train
 
 # 加载 checkpoint 的参数
-# resume_file: /home/zfq/Desktop/logs/controlnet/checkpoint-0
-# resume_file_det: /home/zfq/Desktop/logs/detection/checkpoint-0-det.pth
+# resume_file: ~/Desktop/logs/controlnet/checkpoint-0
+# resume_file_det: ~/Desktop/logs/detection/checkpoint-0-det.pth
 
 # 显存优化
 # 显存优化方面的参数 (不包括 batch size, 虽然设置较小的 batch size 有助于降低显存占用)
@@ -22,10 +22,11 @@ gradient_checkpointing: true
 allow_tf32: true
 mixed_precision: fp16
 
-batch_size: 2
-train_epochs: 10
-max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
+batch_size: 1
+train_epoches: 10
+max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epoches`
 num_workers: 4
+shuffle: true
 gradient_accumulation_steps: 1
 
 # 优化器有关参数 (大部分都是根据 `train_controlnet` 写的)

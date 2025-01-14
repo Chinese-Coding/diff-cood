@@ -12,7 +12,7 @@ from loguru import logger
 from PIL import Image
 from torch.utils.data import Dataset
 
-from data_related.entity import CAVData, LiftSplatShootParams, PFTimestampData
+from data_related.entity import CAVData, LiftSplatShootParams, ObjectBbxData, PFTimestampData
 from opencood.data_utils.post_processor.diff_post_processor import DiffPostProcessor
 from opencood.utils.camera_utils import img_to_tensor  # 如果以后添加对深度图的处理, 这个函数会用到, 因此先不删除
 from opencood.utils.camera_utils import img_transform, normalize_img, sample_augmentation
@@ -113,6 +113,7 @@ class StableDiffusionDataset(Dataset):
         if self.mode == "detection":
             self.postprocessor = DiffPostProcessor(args.postprocess_args)
             self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
+            self.anchor_boxes_tensor = torch.tensor(self.anchor_boxes)
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -154,7 +155,7 @@ class StableDiffusionDataset(Dataset):
             camera_data=_load_camera_data(pathes.cameras),
             lidar_np=_pcd_to_np(pathes.lidar, False),
             bev_img=cv2.imread(pathes.bev),
-            lidar_splitted=[_pcd_to_np(file, False) for file in pathes.lidar_splitted],
+            origin_lidar=_pcd_to_np(pathes.lidar),
         )
 
     def __len__(self):
@@ -190,21 +191,30 @@ class StableDiffusionDataset(Dataset):
         }
 
         if self.mode == "detection":
-            pos_equal_one_list, neg_equal_one_list, targets_list = [], [], []
+            pos_equal_one_list, neg_equal_one_list, targets_list, gt_bbx_list = [], [], [], []
+            origin_lidar_list = []
             for batch in batches:
                 # 目标检测所需的参数
-                object_np, mask, _ = self.postprocessor.generate_object_center_lidar(batch, batch.cav_info["lidar_pose"])
+                object_np, mask, object_ids = self.postprocessor.generate_object_center_lidar(
+                    batch, batch.cav_info["lidar_pose"]
+                )
                 pos_equal_one, neg_equal_one, targets = self.postprocessor.generate_label(
                     object_np, self.anchor_boxes, mask, return_dict=False
                 )
+                object_bbx_data = ObjectBbxData(object_bbx_center=object_np, object_bbx_mask=mask, object_ids=object_ids)
+                gt_bbx = self.postprocessor.generate_gt_bbx(object_bbx_data)
+
                 pos_equal_one_list.append(torch.tensor(pos_equal_one))
                 neg_equal_one_list.append(torch.tensor(neg_equal_one))
                 targets_list.append(torch.tensor(targets))
+                gt_bbx_list.append(torch.tensor(gt_bbx))
+                origin_lidar_list.append(torch.tensor(batch.origin_lidar))
 
             ret["pos_equal_one"] = torch.stack(pos_equal_one_list)
             ret["neg_equal_one"] = torch.stack(neg_equal_one_list)
             ret["targets"] = torch.stack(targets_list)
-
+            ret["gt_bbx"] = torch.stack(gt_bbx_list)  # infer 的时候会用到
+            ret["origin_lidar"] = torch.stack(origin_lidar_list)
         return ret
 
     def set_transform(self, img_transform, pcd_transform):
@@ -275,8 +285,7 @@ class StableDiffusionDataset(Dataset):
             #     img_src.append(depth_img)
             # else:
             #     depth_img = None
-            # TODO: 增加 `self.train` 这个参数
-            #       因为 `lift splat shoot` 使用了预训练模型, 所以不需要数据增强
+            # 因为 `lift splat shoot` 使用了预训练模型, 所以不需要数据增强
             resize, resize_dims, crop, flip, rotate = sample_augmentation(data_aug_conf, False)
             img_src, post_rot2, post_tran2 = img_transform(
                 img_src, post_rot, post_tran, resize, resize_dims, crop, flip, rotate

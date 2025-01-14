@@ -1,22 +1,23 @@
-import torch
+"""推理 (inference: 简写为 infer 只为和 train 长度一样)目标检测模型"""
 
-torch.autograd.set_detect_anomaly(True)
+import torch
 from loguru import logger
 from torch import nn
 
 from data_related.entity import LiftSplatShootParams
-from detection_utils import init_detection_modules, load_detection_modules
+from detection_utils import caluclate_tp_fp, eval_final_results, init_detection_modules, load_detection_modules
 from diffusion_utils import (
     enable_xformers_memory_efficient_attention,
     get_change_fun,
     init_datasloader,
+    init_load_lss_model,
     init_logging,
     load_diffusion_processor,
 )
 from modules.img_processor import ImgProcessor
 from modules.layering_unet_2dc_model import LayeringUNet2DCModel
 from modules.pcd_processor import PcdProcessor
-from opencood.models.lift_splat_shoot import LiftSplatShoot
+from opencood.visualization import simple_vis
 
 
 def main(args):
@@ -24,11 +25,10 @@ def main(args):
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
     args.control_model = os.path.expanduser(args.control_model)
-    writer = init_logging(args)
 
     # 没有看错, 这里先加载 train 数据集, 因为针对目标检测任务还是在 train 数据集上进行训练
     _change = get_change_fun(args.change_args)
-    train_dataloader = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf)
+    infer_dataloader, infer_dataset = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf, True)
 
     """加载模型 (要是能写在一行就好了, 这几行代码有很明显的并列关系)"""
     img_processor = ImgProcessor(args.pretrained_model, args.revision, args.control_model, args.layering)
@@ -64,17 +64,13 @@ def main(args):
         img_processor.enable_gradient_checkpointing()
         pcd_processor.enable_gradient_checkpointing()
 
-    img_device, pcd_device = torch.device("cuda:1"), torch.device("cuda:1")
+    img_device, pcd_device = torch.device("cuda:0"), torch.device("cuda:1")
     img_processor.to(img_device, weight_dtype, True)
     pcd_processor.to(pcd_device, weight_dtype, True)
 
     """LiftSplatShoot 模型和对应的降低通道数的卷积层"""
-    lss_model = LiftSplatShoot(args.lift_splat_shoot_args, img_device)
-    lss_model.load_state_dict(
-        torch.load(os.path.expanduser(args.lift_splat_shoot_args.pretrained_model_path), weights_only=False), strict=False
-    )
-    lss_model.eval()
-    lss_model.to(device=img_device)
+    lss_model = init_load_lss_model(args, img_device)
+
     bottleneck_layer = nn.Conv2d(128, 3, kernel_size=1)
     # 这段代码是后面添加的, 为了不改变原来函数的调用接口, 这里再单独做一个判断,
     # 可能不够简洁高效, 但是开发周期短, 先这么将就一下
@@ -84,32 +80,40 @@ def main(args):
         logger.success(f"从 {args.resume_file} 中加载 bottleneck_layer 模型")
 
     """目标检测部分"""
-    detection_head, unsample_layer, loss_fn, optimizer, lr_scheduler = init_detection_modules(args)
-    first_epoch = 0
-    if "resume_file_det" in args:
-        checkpoint = load_detection_modules(args.resume_file_det, detection_head, optimizer, lr_scheduler)
-        first_epoch = checkpoint["epoch"] + 1
+    detection_head, unsample_layer, _, _, _ = init_detection_modules(args)
 
+    if "resume_file_det" in args:
+        # 这个就是直接指定文件了, 而不是像 diffusion 那样需要指定文件名前缀
+        checkpoint = load_detection_modules(args.resume_file_det, detection_head)
         """
         先用 diffusion 在 OPV2V 数据集进行预训练, 再将其用于目标检测任务, loss 为 nan (推理过程中 sample 变为 nan)
         单纯训练 diffusion 的时候 loss 也会变成 nan, 是预训练的太好了吗?
         于是我想要直接改成直接加载 diffusion 预训练的权重, 而不经过 OPV2V 数据集的预训练, 所以 `bottleneck_layer` 也变成目标检测任务的权重
         """
-        if "resume_file" not in args:
+        if "bottleneck_layer" in checkpoint:
             bottleneck_layer.load_state_dict(checkpoint["bottleneck_layer"])
             logger.success(f"从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler 以及 bottleneck_layer")
         else:
-            logger.success(f"从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler")
-
-    detection_head.train()
-    bottleneck_layer.train()
+            logger.warning("没有从 `resume_file` 或 `resume_file_det`中加载 `bottleneck_layer`, 使用随机初始化的权重")
+            logger.success("从 {args.resume_file_det} 中加载 detection_head, optimizer, lr_scheduler")
+    else:
+        raise ValueError("没有指定 `resume_file_det`")
+    detection_head.eval()
+    bottleneck_layer.eval()
     detection_head.to(img_device)  # 和图片是用一张显卡, 因为图片那部分占用的现存比较小
     unsample_layer.to(img_device)
     bottleneck_layer.to(img_device)
+
+    # Create the dictionary for evaluation
+    result_stat = {
+        0.3: {"tp": [], "fp": [], "gt": 0, "score": []},
+        0.5: {"tp": [], "fp": [], "gt": 0, "score": []},
+        0.7: {"tp": [], "fp": [], "gt": 0, "score": []},
+    }
+
     """开始推理"""
-    for epoch in range(first_epoch, args.train_epoches):  # TODO: 这里的训练次数应该写成超参数
-        logger.success(f"第 {epoch} 个 epoch 开始训练")
-        for step, batch in enumerate(train_dataloader):
+    for step, batch in enumerate(infer_dataloader):
+        with torch.no_grad():
             """预处理图像, 把图像处理为 BEV 图"""
             lss_params: LiftSplatShootParams = batch["lss_params"]
             lss_params.to(img_device)
@@ -120,9 +124,7 @@ def main(args):
             logger.debug(f"获得的输入 diffusion 的 shape: img({img.shape}) pcd({batch['pcd'].shape})")
 
             """图像推理"""
-            _, img_params = img_processor.prepare(
-                img.to(img_device), batch["img_inputs_ids"].to(img_device), False, args.t
-            )  # type: torch.Tensor, LayeringUNet2DCParams
+            _, img_params = img_processor.prepare(img.to(img_device), batch["img_inputs_ids"].to(img_device), False, args.t)
             img_params.preserved_up_indices = args.preserved_up_indices  # 相比 diffusion 多了这一步
             img_params.to(img_device)
             img_unet: LayeringUNet2DCModel = img_processor.unet
@@ -131,7 +133,7 @@ def main(args):
             """点云推理"""
             _, pcd_params = pcd_processor.prepare(
                 batch["pcd"].to(pcd_device), batch["pcd_inputs_ids"].to(pcd_device), False, args.t
-            )  # type: torch.Tensor, LayeringUNet2DCParams
+            )
             pcd_params.preserved_up_indices = args.preserved_up_indices  # 相比 diffusion 多了这一步
             pcd_params.to(pcd_device)
             pcd_unet: LayeringUNet2DCModel = pcd_processor.unet
@@ -154,30 +156,36 @@ def main(args):
             feature = unsample_layer(pcd_feature[3].to(device=img_device, dtype=torch.float32))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
             # fmt: off
-            total_loss = loss_fn(
-                cls_pred, reg_pred, dir_pred,
-                batch["pos_equal_one"].to(img_device), batch["neg_equal_one"].to(img_device), batch["targets"].to(img_device)
-            )
-            # fmt: on
-            loss_fn.logging(epoch, step, len(train_dataloader), writer)
 
-            total_loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-        save_dict = {
-            "epoch": epoch,
-            "detection_head": detection_head.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-        }
-        if "resume_file" not in args:
-            save_dict["bottleneck_layer"] = bottleneck_layer.state_dict()
-        torch.save(
-            save_dict,
-            f"{args.output_dir}/checkpoint-{epoch}-det.pth",
-        )
-    writer.close()
+            pred_box_tensor, pred_score = infer_dataset.postprocessor.postprocess(
+                infer_dataset.anchor_boxes_tensor.to(img_device), cls_pred.to(img_device), reg_pred.to(img_device), dir_pred.to(img_device)
+            )
+            
+            caluclate_tp_fp(pred_box_tensor, pred_score, batch["gt_bbx"].to(img_device), result_stat, 0.3)
+            caluclate_tp_fp(pred_box_tensor, pred_score, batch["gt_bbx"].to(img_device), result_stat, 0.5)
+            caluclate_tp_fp(pred_box_tensor, pred_score, batch["gt_bbx"].to(img_device), result_stat, 0.7)
+            
+            if (step % args.save_vis_interval == 0) and (pred_box_tensor is not None or batch["gt_bbx"] is not None):
+                vis_save_path_root = os.path.join(args.output_dir, "visualize")
+                if not os.path.exists(vis_save_path_root):
+                    os.makedirs(vis_save_path_root)
+                
+                vis_save_path = os.path.join(vis_save_path_root, f"step_{step:%05}.png")
+                infer_result = {
+                    "pred_box_tensor": pred_box_tensor,
+                    "gt_tensor": batch["gt_bbx"],
+                    "pred_score": pred_score,
+                }
+                simple_vis.visualize(
+                    infer_result,
+                    batch["origin_lidar"],
+                    args["postprocess_args"]["gt_range"],
+                    vis_save_path,
+                    method="bev",
+                    left_hand=True,
+                )
+
+    eval_final_results(result_stat, args.output_dir)
 
 
 if __name__ == "__main__":

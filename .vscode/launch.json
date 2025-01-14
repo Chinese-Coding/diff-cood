@@ -5,6 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "debug for train img diffusion",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/train_img_diffusion.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}:${workspaceFolder}/src:${workspaceFolder}/opencood"
+            }
+        },
+        {
             "name": "debug for train detection",
             "type": "debugpy",
             "request": "launch",

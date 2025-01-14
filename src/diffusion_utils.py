@@ -15,6 +15,7 @@ from transformers import AutoTokenizer
 
 from data_related.stable_diffusion_dataset import StableDiffusionDataset
 from data_related.transform_funs import img_transform, pcd_transform
+from opencood.models.lift_splat_shoot import LiftSplatShoot
 
 logger = get_logger(__name__)
 
@@ -33,7 +34,7 @@ def get_optimizer_class(args):
     return optimizer_class
 
 
-def init_datasloader(args, data_aug_conf):
+def init_datasloader(args, data_aug_conf, need_dataset=False):
     """嫌弃从 `args` 中的 `lift_splat_shoot_args` 传入 `data_aug_conf` 太长了, 于是从调用的地方传递"""
     tokenizer = AutoTokenizer.from_pretrained(
         args.pretrained_model,
@@ -47,8 +48,16 @@ def init_datasloader(args, data_aug_conf):
     train_dataset.set_tokenizer(tokenizer)
     train_dataset.set_data_aug_conf(data_aug_conf)
     train_dataloader = DataLoader(
-        train_dataset, args.batch_size, True, num_workers=args.num_workers, collate_fn=train_dataset.collate_fn, pin_memory=True
+        train_dataset,
+        args.batch_size,
+        args.shuffle,
+        num_workers=args.num_workers,
+        collate_fn=train_dataset.collate_fn,
+        pin_memory=True,
+        drop_last=True,
     )
+    if need_dataset:
+        return train_dataloader, train_dataset
     return train_dataloader
 
 
@@ -109,6 +118,26 @@ def enable_xformers_memory_efficient_attention(img_processor, pcd_processor):
             )
             img_processor.enable_xformers_memory_efficient_attention()
             pcd_processor.enable_xformers_memory_efficient_attention()
+    else:
+        raise ValueError("xformers is not available. Make sure it is installed correctly")
+
+
+def enable_xformers_memory_efficient_attention_with_one_processor(processor):
+    """判断 xformers 是否可以启用, 如果可以则启用, 否则则抛出异常"""
+    from diffusers.utils.import_utils import is_xformers_available
+
+    if is_xformers_available():
+        import xformers
+        from packaging import version
+
+        xformers_version = version.parse(xformers.__version__)
+        if xformers_version == version.parse("0.0.16"):
+            logger.warning(
+                "xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please"
+                " update xFormers to at least 0.0.17. See"
+                " https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details."
+            )
+            processor.enable_xformers_memory_efficient_attention()
     else:
         raise ValueError("xformers is not available. Make sure it is installed correctly")
 
@@ -178,6 +207,13 @@ def load_modules(resume_file, unet, optimizer, lr_scheduler):
     return checkpoint["epoch"]
 
 
+def load_diffusion_modules(resume_file, unet, lr_scheduler):
+    checkpoint = torch.load(resume_file, weights_only=False)
+    unet.load_state_dict(checkpoint["unet"])
+    lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+    return checkpoint
+
+
 def get_change_fun(change_args: DictConfig):
     patch_size, strategy = change_args.get("patch_size", 5), change_args.get("strategy", "random")
     match strategy:
@@ -213,3 +249,34 @@ def init_logging(args):
     loguru_logger.add(sys.stdout, level=args.get("logging_level", "DEBUG"))
     loguru_logger.add(logfile_path, rotation="1 day", level=args.get("logging_level", "DEBUG"))
     return writer
+
+
+def load_diffusion_processor(resume_file, img_processor, pcd_processor):
+    img_checkpoint, pcd_checkpoint = torch.load(f"{resume_file}-img.pth", weights_only=False), torch.load(
+        f"{resume_file}-pcd.pth", weights_only=False
+    )
+    # 检查一下两个 epoch 相等 (虽然 assert 可以选择关闭, 但是一行检查代码写起来简单, 而且一般也不会关闭)
+    assert img_checkpoint["epoch"] == pcd_checkpoint["epoch"]
+    img_processor.unet.load_state_dict(img_checkpoint["unet"])
+    pcd_processor.unet.load_state_dict(pcd_checkpoint["unet"])
+    return img_checkpoint
+
+
+def init_load_lss_model(args, device):
+    lss_model = LiftSplatShoot(args.lift_splat_shoot_args, device)
+    lss_model.load_state_dict(
+        torch.load(os.path.expanduser(args.lift_splat_shoot_args.pretrained_model_path), weights_only=False), strict=False
+    )
+    lss_model.eval()
+    lss_model.to(device=device)
+    return lss_model
+
+
+def check_tensor_leagal(tensor, name, epoch, step):
+    """检查 tensor 是否合法, 如果非法则停止训练"""
+    if torch.isnan(tensor).any():
+        loguru_logger.error(f"{name} 中含有 NaN, 停止训练 ({epoch=}, {step=})")
+        exit()
+    if torch.isinf(tensor).any():
+        loguru_logger.error(f"{name} 中含有 inf, 停止训练 ({epoch=}, {step=})")
+        exit()

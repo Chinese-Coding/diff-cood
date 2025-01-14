@@ -25,8 +25,8 @@ mixed_precision: fp16
 batch_size: 1
 gradient_accumulation_steps: 1
 report_to: tensorboard
-max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epochs`
-train_epochs: 10
+max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epoches`
+train_epoches: 10
 resolution: 512
 num_workers: 4
 checkpointing_steps: 500

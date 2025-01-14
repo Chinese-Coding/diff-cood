@@ -66,6 +66,9 @@ class PointPillarLoss(nn.Module):
         self.loss_dict = {}
 
     def forward(self, cls_pred, reg_pred, dir_pred, pos_equal_one, neg_equal_one, targets):
+        """
+        :param cls_pred: [batch_size, 1, H, W]
+        """
         batch_size = cls_pred.shape[0]
 
         cls_labels = pos_equal_one.view(batch_size, -1, 1)
