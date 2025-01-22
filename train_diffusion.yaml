@@ -20,10 +20,10 @@ use_8bit_adam: true
 enable_xformers_memory_efficient_attention: true
 gradient_checkpointing: true
 allow_tf32: true
-mixed_precision: fp16
+mixed_precision: bf16
 
 batch_size: 1
-train_epoches: 10
+train_epoches: 30
 max_train_steps: null # 如果不为 null 则会在程序中用于替代 `train_epoches`
 num_workers: 4
 shuffle: true

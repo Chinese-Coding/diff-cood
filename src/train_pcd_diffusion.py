@@ -1,6 +1,5 @@
 """不使用 accelerate, 同时进行某一层交换的 train diffusion 函数"""
 
-import math
 
 import torch
 import torch.nn.functional as F
@@ -24,18 +23,11 @@ def main(args):
     # 路径展开
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
-    args.control_model = os.path.expanduser(args.control_model)
 
     writer = init_logging(args)
 
     optimizer_class = get_optimizer_class(args)
     train_dataloader = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf)
-
-    # Scheduler and math around the number of training steps.
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
-    if args.max_train_steps is None:
-        args.max_train_steps = args.train_epoches * num_update_steps_per_epoch
-        args.train_epoches = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
 
     """
     加载模型 (标注提示信息, 方便 IDE 提示)
@@ -75,12 +67,12 @@ def main(args):
     pcd_device = torch.device("cuda:1")
     pcd_processor.to(pcd_device, weight_dtype, True)
 
-    global_step = 0
-    progress_bar = tqdm(range(0, int(args.max_train_steps)), initial=0, desc="Steps")
+    global_step = (first_epoch - 1) * len(train_dataloader) / args.batch_size if first_epoch > 0 else 0
     logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epoches} 个 epoch")
 
     for epoch in range(first_epoch, args.train_epoches):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
+        progress_bar = tqdm(range(0, int(len(train_dataloader))), initial=0, desc=f"Epoch: {epoch}/{args.train_epoches}")
         for step, batch in enumerate(train_dataloader):
             """处理点云"""
             pcd_noise, pcd_params = pcd_processor.prepare(
@@ -99,6 +91,8 @@ def main(args):
             pcd_loss = F.mse_loss(pcd_noise_pred.float(), pcd_noise.float(), reduction="mean")
 
             pcd_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(pcd_unet.parameters(), args.max_grad_norm)
 
             pcd_optimizer.step()
             pcd_lr_scheduler.step()
@@ -126,7 +120,8 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
-    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion")
-    args.batch_size = 8
+    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_01_16")
+    args.batch_size = 16
     args.num_workers = 16
+    args.train_epoches = 30
     main(args)

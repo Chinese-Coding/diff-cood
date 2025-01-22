@@ -27,7 +27,6 @@ def main(args):
     # 路径展开
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
-    args.control_model = os.path.expanduser(args.control_model)
 
     writer = init_logging(args)
 
@@ -98,7 +97,7 @@ def main(args):
     bottleneck_layer.train()
     bottleneck_layer.to(device=img_device)
 
-    global_step = (first_epoch - 1) * len(train_dataloader) / args.batch_size
+    global_step = (first_epoch - 1) * len(train_dataloader) / args.batch_size if first_epoch > 0 else 0
     logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epoches} 个 epoch")
 
     for epoch in range(first_epoch, args.train_epoches):
@@ -127,11 +126,9 @@ def main(args):
 
             """计算损失, 开始反向传播"""
             img_loss = F.mse_loss(img_noise_pred.float(), img_noise.float(), reduction="mean")
-            if torch.isnan(img_loss):
-                logger.error(f"img_loss 为 NaN, 停止训练 ({epoch=}, {step=})")
-                exit()
-
             img_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(img_unet.parameters(), args.max_grad_norm)
 
             img_optimizer.step()
             img_lr_scheduler.step()
@@ -163,8 +160,10 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
-    args.output_dir = os.path.expanduser("~/Desktop/logs/img_diffusion_2")
-    args.shuffle = False
-    args.train_epoches = 5
-    args.resume_file = os.path.expanduser("~/Desktop/logs/img_diffusion_2/checkpoint-1")
+    args.output_dir = os.path.expanduser("~/Desktop/logs/img_diffusion_2025_01_22")
+    # args.resume_file = os.path.expanduser("~/Desktop/logs/img_diffusion_2025_01_16/checkpoint-12")
+    args.batch_size = 2
+    args.num_workers = 8
+    args.shuffle = True
+    args.train_epoches = 30
     main(args)
