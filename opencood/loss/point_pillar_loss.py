@@ -173,6 +173,7 @@ class PointPillarLoss(nn.Module):
         )
 
         if not writer is None:
+            writer.add_scalar("Total_loss", total_loss, epoch * batch_len + batch_id)
             writer.add_scalar("Regression_loss", reg_loss, epoch * batch_len + batch_id)
             writer.add_scalar("Confidence_loss", cls_loss, epoch * batch_len + batch_id)
             writer.add_scalar("Dir_loss", dir_loss, epoch * batch_len + batch_id)

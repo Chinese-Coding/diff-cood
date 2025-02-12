@@ -23,6 +23,7 @@ mixed_precision: fp32
 batch_size: 2
 train_epoches: 10
 num_workers: 4
+shuffle: true
 
 # 优化器有关参数 (都是从 HEAL 抄的)
 learning_rate: 0.002
