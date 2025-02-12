@@ -169,3 +169,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# 原版 text_to_image 训练时产生的日志文件
+src/tests/原版_text_to_image/sd-*

@@ -213,8 +213,10 @@ class StableDiffusionDataset(Dataset):
             ret["pos_equal_one"] = torch.stack(pos_equal_one_list)
             ret["neg_equal_one"] = torch.stack(neg_equal_one_list)
             ret["targets"] = torch.stack(targets_list)
-            ret["gt_bbx"] = torch.stack(gt_bbx_list)  # infer 的时候会用到
-            ret["origin_lidar"] = torch.stack(origin_lidar_list)
+            # 每个场景下 gt_bbx 的大小不同, 没法直接对 gt_bbx 做 stack 操作, 所以只能用 list 来进行存储
+            # 一般来说 infer 的时候 batch size 是 1, 所以使用 torch.stack(gt_bbx_list) 的时候不会报错
+            ret["gt_bbx_list"] = gt_bbx_list  # infer 的时候会用到
+            ret["origin_lidar_list"] = origin_lidar_list
         return ret
 
     def set_transform(self, img_transform, pcd_transform):

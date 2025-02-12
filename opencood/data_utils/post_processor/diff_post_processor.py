@@ -84,8 +84,7 @@ class DiffPostProcessor:
 
         output_dict = box_utils.diff_project_world_objects(vehicles, ref_lidar_pose, filter_range, self.order, enlarge_z)
 
-        object_np = np.zeros((self.max_num, 7))
-        mask = np.zeros(self.max_num)
+        object_np, mask = np.zeros((self.max_num, 7)), np.zeros(self.max_num)
         object_ids = []
 
         for i, (object_id, object_bbx) in enumerate(output_dict.items()):
@@ -143,7 +142,7 @@ class DiffPostProcessor:
 
         feature_map_shape = anchor_boxes.shape[:2]  # (H, W)
 
-        anchor_boxes = einops.rearrange(anchor_boxes, "H W anchor_num 7 -> (H W anchor_num) 7")
+        anchor_boxes = einops.rearrange(anchor_boxes, "H W anchor_num x -> (H W anchor_num) x", x=7)
         # normalization factor, (H * W * anchor_num)
         anchors_d = np.sqrt(anchor_boxes[:, 4] ** 2 + anchor_boxes[:, 5] ** 2)
 

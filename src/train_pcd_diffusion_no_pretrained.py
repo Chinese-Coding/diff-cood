@@ -126,8 +126,8 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
-    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_02_11")
+    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_02_12")
     args.batch_size = 16
     args.num_workers = 16
-    args.train_epoches = 100
+    args.train_epoches = 15
     main(args)

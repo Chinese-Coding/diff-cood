@@ -2,7 +2,7 @@ import os
 from typing import Optional
 
 import torch
-from diffusers import AutoencoderKL, ControlNetModel, DDPMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from torch import nn
 from transformers import PretrainedConfig
 
@@ -30,7 +30,7 @@ def import_model_class_from_pretrained_model(pretrained_model: str, revision: st
 
 
 class BaseProcessor(nn.Module):
-    def __init__(self, pretrained_model: str, revision: str, controlnet_model: Optional[str] = None, layering=False):
+    def __init__(self, pretrained_model: str, revision: str, layering=False):
         super().__init__()
         text_encoder_cls = import_model_class_from_pretrained_model(pretrained_model, revision)
         unet_class = LayeringUNet2DCModel if layering else UNet2DConditionModel
@@ -39,12 +39,6 @@ class BaseProcessor(nn.Module):
         self.unet = unet_class.from_pretrained(pretrained_model, subfolder="unet", revision=revision)
         self.text_encoder = text_encoder_cls.from_pretrained(pretrained_model, subfolder="text_encoder")
 
-        self.controlnet = (
-            ControlNetModel.from_pretrained(controlnet_model, revision=revision)
-            if controlnet_model
-            else ControlNetModel.from_unet(self.unet)
-        )
-
         self.noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model, subfolder="scheduler", revision=revision)
         self.num_train_timesteps = self.noise_scheduler.config.num_train_timesteps
 
@@ -52,17 +46,14 @@ class BaseProcessor(nn.Module):
         self.vae.requires_grad_(False)
         self.unet.train()
         self.text_encoder.requires_grad_(False)
-        self.controlnet.requires_grad_(False)
 
     def set_eval(self):
         self.vae.requires_grad_(False)
         self.unet.requires_grad_(False)
         self.text_encoder.requires_grad_(False)
-        self.controlnet.requires_grad_(False)
 
     def enable_xformers_memory_efficient_attention(self):
         self.unet.enable_xformers_memory_efficient_attention()
-        self.controlnet.enable_xformers_memory_efficient_attention()
 
     def enable_gradient_checkpointing(self):
         self.unet.enable_gradient_checkpointing()
@@ -73,7 +64,6 @@ class BaseProcessor(nn.Module):
         现在想要通过 torch 进行改写, 所以加一个标志位用于全部移动
         """
         self.vae.to(device, dtype)
-        self.controlnet.to(device, dtype)
         self.text_encoder.to(device, dtype)
         if unet_too:
             self.unet.to(device, dtype)
@@ -101,3 +91,6 @@ class BaseProcessor(nn.Module):
             return noise, LayeringUNet2DCParams(
                 sample=noisy_latents, timestep=timestep, encoder_hidden_states=encoder_hidden_states
             )
+
+    def add_noise(self, latents: torch.Tensor, noise: torch.Tensor, timestep: torch.Tensor):
+        return self.noise_scheduler.add_noise(latents.float(), noise.float(), timestep).to(dtype=self.weight_dtype)
