@@ -36,7 +36,7 @@ def get_optimizer_class(args):
     return optimizer_class
 
 
-def init_datasloader(args, data_aug_conf, need_dataset=False):
+def init_dataloader(args, data_aug_conf, need_dataset=False):
     """嫌弃从 `args` 中的 `lift_splat_shoot_args` 传入 `data_aug_conf` 太长了, 于是从调用的地方传递"""
     tokenizer = AutoTokenizer.from_pretrained(
         args.pretrained_model,
@@ -63,7 +63,7 @@ def init_datasloader(args, data_aug_conf, need_dataset=False):
     return train_dataloader
 
 
-def init_modules(args, processor_class:Type[ImgProcessor | PcdProcessor], optimizer_class, accelerator_project_config=None):
+def init_modules(args, processor_class: Type[ImgProcessor | PcdProcessor], optimizer_class, accelerator_project_config=None):
     processor = processor_class(args.pretrained_model, args.revision, args.layering)
     optimizer = optimizer_class(
         processor.unet.parameters(),
@@ -123,9 +123,10 @@ def enable_xformers_memory_efficient_attention(img_processor, pcd_processor):
     else:
         raise ValueError("xformers is not available. Make sure it is installed correctly")
 
+
 def enable_xformers_memory_efficient_attention2(img_unet, pcd_unet):
     from diffusers.utils.import_utils import is_xformers_available
-    
+
     if is_xformers_available():
         img_unet.enable_xformers_memory_efficient_attention()
         pcd_unet.enable_xformers_memory_efficient_attention()
@@ -209,6 +210,7 @@ def save_modules(output_dir: str, epoch, unet, optimizer, lr_scheduler, postfix:
     torch.save(save_dict, save_path)
     loguru_logger.success(f"将 {postfix} 模型保存在 {save_path}")
 
+
 def save_modules2(output_dir: str, epoch, img_unet, pcd_unet, optimizer, lr_scheduler, **kwargs):
     save_path = os.path.join(output_dir, f"checkpoint-{epoch}.pth")
     save_dict = {
@@ -222,6 +224,7 @@ def save_modules2(output_dir: str, epoch, img_unet, pcd_unet, optimizer, lr_sche
         save_dict["bottleneck_layer"] = kwargs["bottleneck_layer"].state_dict()
     torch.save(save_dict, save_path)
     loguru_logger.success(f"将 模型保存在 {save_path}")
+
 
 def load_modules(resume_file, unet, optimizer, lr_scheduler):
     checkpoint = torch.load(resume_file, weights_only=False)
@@ -237,12 +240,14 @@ def load_diffusion_modules(resume_file, unet, lr_scheduler):
     lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
     return checkpoint
 
-def load_diffusion_modules2(resume_file,img_unet, pcd_unet, lr_scheduler):
+
+def load_diffusion_modules2(resume_file, img_unet, pcd_unet, lr_scheduler):
     checkpoint = torch.load(resume_file, weights_only=False)
     img_unet.load_state_dict(checkpoint["img_unet"])
     pcd_unet.load_state_dict(checkpoint["pcd_unet"])
     lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
     return checkpoint
+
 
 def get_change_fun(change_args: DictConfig):
     patch_size, strategy = change_args.get("patch_size", 5), change_args.get("strategy", "random")

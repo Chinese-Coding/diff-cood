@@ -1,45 +1,42 @@
+# -*- coding: utf-8 -*-
+# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
+# License: TDG-Attribution-NonCommercial-NoDistrib
+
 import os
 
 import numpy as np
 import torch
-import torch.nn as nn
-from opencood.utils import yaml_utils
-
-from modules.detection_head import DetectionHead
-from opencood.loss.point_pillar_loss import PointPillarLoss
-from opencood.utils import common_utils
-from opencood.utils.eval_utils import voc_ap
+from opencood.utils import yaml_utils, common_utils
 
 
-def init_detection_modules(args):
-    detection_head = DetectionHead(args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args)
-    #  TODO: 这个上采用层用来把提取到的特征上采样到适用于 anchor 的分辨率
-    upsample_layer = nn.Upsample(scale_factor=4, mode="bilinear")
-    loss_fn = PointPillarLoss(args.loss_args)
-    # 优化器参数从 HEAL 中的某个配置文件抄过来的, TODO: 应该写成超参数的形式
-    optimizer = torch.optim.Adam(
-        detection_head.parameters(), lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=args.adam_weight_decay
-    )
-    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_milestones, gamma=args.lr_gamma)
-    return detection_head, upsample_layer, loss_fn, optimizer, lr_scheduler
+def voc_ap(rec, prec):
+    """
+    VOC 2010 Average Precision.
+    """
+    rec.insert(0, 0.0)
+    rec.append(1.0)
+    mrec = rec[:]
 
+    prec.insert(0, 0.0)
+    prec.append(0.0)
+    mpre = prec[:]
 
-def load_detection_modules(resume_file_det, detection_head, optimizer=None, lr_scheduler=None):
-    checkpoint = torch.load(os.path.expanduser(resume_file_det), weights_only=False)
-    detection_head.load_state_dict(checkpoint["detection_head"])
-    if optimizer is not None and lr_scheduler is not None:
-        optimizer.load_state_dict(checkpoint["optimizer"])
-        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-    elif optimizer is None and lr_scheduler is None:
-        pass
-    else:
-        raise ValueError("必须同时指定 `optimizer`, `lr_scheduler`.")
-    return checkpoint
+    for i in range(len(mpre) - 2, -1, -1):
+        mpre[i] = max(mpre[i], mpre[i + 1])
+
+    i_list = []
+    for i in range(1, len(mrec)):
+        if mrec[i] != mrec[i - 1]:
+            i_list.append(i)
+
+    ap = 0.0
+    for i in i_list:
+        ap += (mrec[i] - mrec[i - 1]) * mpre[i]
+    return ap, mrec, mpre
 
 
 def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
     """
-    inference 的时候会用到
     Calculate the true positive and false positive numbers of the current
     frames.
     Parameters
@@ -94,7 +91,6 @@ def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
 
 def calculate_ap(result_stat, iou):
     """
-    推理的时候会用到
     Calculate the average precision and recall, and save them into a txt.
     Parameters
     ----------
@@ -139,7 +135,6 @@ def calculate_ap(result_stat, iou):
 
 
 def eval_final_results(result_stat, save_path, infer_info=None):
-    """推理的时候会用到"""
     dump_dict = {}
 
     ap_30, mrec_30, mpre_30 = calculate_ap(result_stat, 0.30)

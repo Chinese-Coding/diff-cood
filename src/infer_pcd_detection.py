@@ -1,12 +1,18 @@
+"""
+推理 (inference: 简写为 infer 只为和 train 长度一样)目标检测模型
+专门针对 pcd 写的
+"""
+
 import os
 
+from diffusion_utils import init_dataloader
+from modules.detection_unet_2d_condition import DetectionUNet2DConditionModel
+from modules.prepare_processpr import PrepareProcessor
 import torch
 from loguru import logger
 
-from diffusion_utils import init_logging, init_dataloader
-from detection_utils import init_detection_modules, load_detection_modules
-from modules.detection_unet_2d_condition import DetectionUNet2DConditionModel
-from modules.prepare_processpr import PrepareProcessor
+from detection_utils import load_detection_modules, init_detection_modules, caluclate_tp_fp, eval_final_results
+from opencood.visualization import simple_vis
 
 
 def main(args):
@@ -15,8 +21,7 @@ def main(args):
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
     args.pcd_unet_file = os.path.expanduser(args.pcd_unet_file)
 
-    writer = init_logging(args)
-    train_dataloader = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf)
+    infer_dataloader, infer_dataset = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf, True)
 
     """特征提取网络"""
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
@@ -41,11 +46,9 @@ def main(args):
         pcd_unet.enable_gradient_checkpointing()
 
     """目标检测部分"""
-    first_epoch = 0
-    detection_head, upsample_layer, loss_fn, optimizer, lr_scheduler = init_detection_modules(args)
-    if "resume_file_det" in args:
-        checkpoint = load_detection_modules(args.resume_file_det, detection_head, optimizer, lr_scheduler)
-        first_epoch = checkpoint["epoch"] + 1
+    detection_head, upsample_layer, _, _, _ = init_detection_modules(args)
+    # 推理的时候一定要有模型权重
+    load_detection_modules(args.resume_file_det, detection_head)
 
     """设备选择, 模型转移以及 train 不 train"""
     device = torch.device("cuda:0")
@@ -54,9 +57,15 @@ def main(args):
     detection_head.train()
     detection_head.to(device)
 
-    for epoch in range(first_epoch, args.train_epoches):
-        logger.success(f"第 {epoch} 个 epoch 开始训练")
-        for step, batch in enumerate(train_dataloader):
+    # Create the dictionary for evaluation
+    result_stat = {
+        0.3: {"tp": [], "fp": [], "gt": 0, "score": []},
+        0.5: {"tp": [], "fp": [], "gt": 0, "score": []},
+        0.7: {"tp": [], "fp": [], "gt": 0, "score": []},
+    }
+
+    for step, batch in enumerate(infer_dataloader):
+        with torch.no_grad():
             """diffusion 部分"""
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
             noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
@@ -65,7 +74,6 @@ def main(args):
             timesteps = prepare_processor.generate_timestep(bsz, device).long()
             encoder_hidden_states = prepare_processor.text_encoder(batch["pcd_inputs_ids"].to(device), return_dict=False)[0]
             noisy_latents = prepare_processor.add_noise(latents, noise, timesteps)
-            logger.debug(f"{noisy_latents.shape=}, {encoder_hidden_states.shape=}")
             internal_sample = {}  # TODO: 如果显存不够用的话需要从 cuda 转移到 cpu 上, 在 forward 里面修改
             model_pred = pcd_unet(noisy_latents, timesteps, encoder_hidden_states, internal_sample=internal_sample)[0]
 
@@ -73,27 +81,34 @@ def main(args):
             pcd_feature = internal_sample["after_upsample_block_3"]
             feature = upsample_layer(pcd_feature.to(device, dtype=torch.float32))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
+
+            """推理"""
             # fmt: off
-            total_loss = loss_fn(
-                cls_pred, reg_pred, dir_pred,
-                batch["pos_equal_one"].to(device), batch["neg_equal_one"].to(device), batch["targets"].to(device)
+            pred_box_tensor, pred_score = infer_dataset.postprocessor.postprocess(
+                infer_dataset.anchor_boxes_tensor.to(device),
+                cls_pred.to(device), reg_pred.to(device), dir_pred.to(device)
             )
             # fmt: on
-            loss_fn.logging(epoch, step, len(train_dataloader), writer)
-            total_loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-        save_dict = {
-            "epoch": epoch,
-            "detection_head": detection_head.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-        }
-        save_path = f"{args.output_dir}/checkpoint-{epoch}-det.pth"
-        torch.save(save_dict, save_path)
-        logger.success(f"将模型保存在 {save_path}")
-    writer.close()
+            gt_box_tensor = batch["gt_bbx_list"][0]
+            caluclate_tp_fp(pred_box_tensor, pred_score, gt_box_tensor.to(device), result_stat, 0.3)
+            caluclate_tp_fp(pred_box_tensor, pred_score, gt_box_tensor.to(device), result_stat, 0.5)
+            caluclate_tp_fp(pred_box_tensor, pred_score, gt_box_tensor.to(device), result_stat, 0.7)
+
+            if (step % args.save_vis_interval == 0) and (pred_box_tensor is not None or gt_box_tensor is not None):
+                logger.info(f"对 {step} 的结果进行可视化")
+                vis_save_path_root = os.path.join(args.output_dir, "visualize")
+
+                vis_save_path = os.path.join(vis_save_path_root, f"step_{step:05d}.png")
+                infer_result = {
+                    "pred_box_tensor": pred_box_tensor,
+                    "gt_box_tensor": batch["gt_bbx_list"][0],
+                    "score_tensor": pred_score,
+                }
+                simple_vis.visualize(
+                    infer_result, batch["origin_lidar_list"][0], args.cav_lidar_range, vis_save_path, method="bev"
+                )
+    eval_final_results(result_stat, args.output_dir)
+    logger.success(f"推理结果保存在 {args.output_dir}")
 
 
 if __name__ == "__main__":
@@ -101,5 +116,8 @@ if __name__ == "__main__":
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
     args.pcd_unet_file = "~/Desktop/logs/pcd_diffusion_2025_02_12/checkpoint-10-pcd.pth"
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_13"
+    args.resume_file_det = "~/Desktop/logs/pcd_detection_2025_02_12/checkpoint-9-det.pth"
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_12"
+    args.save_vis_interval = 40  # 从 heal 里面抄过来的
+    args.batch_size = 1
     main(args)

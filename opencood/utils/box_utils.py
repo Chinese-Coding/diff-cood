@@ -286,6 +286,8 @@ def project_box3d(box3d, transformation_matrix):
     assert transformation_matrix.shape == (4, 4)
     box3d, is_numpy = common_utils.check_numpy_to_torch(box3d)
     transformation_matrix, _ = common_utils.check_numpy_to_torch(transformation_matrix)
+    # 相对于原始函数增加了这么一行 (因为原始函数在调用之前就已经统一了 transformation_matrix 和 box3d 所在的矩阵)
+    transformation_matrix = transformation_matrix.to(box3d.device)
 
     # (N, 3, 8)
     box3d_corner = box3d.transpose(1, 2)

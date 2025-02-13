@@ -3,6 +3,7 @@
 # License: TDG-Attribution-NonCommercial-NoDistrib
 
 import copy
+from typing import Dict, Any
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -11,19 +12,21 @@ import opencood.visualization.simple_plot3d.canvas_3d as canvas_3d
 import opencood.visualization.simple_plot3d.canvas_bev as canvas_bev
 
 
-def visualize(infer_result, pcd, pc_range, save_path, method="3d", left_hand=False):
+def visualize(infer_result: Dict[str, Any], pcd, pc_range, save_path, method="3d", left_hand=False):
     """
     Visualize the prediction, ground truth with point cloud together.
     They may be flipped in y axis. Since carla is left hand coordinate, while kitti is right hand.
 
     Parameters
     ----------
-    infer_result:
+    infer_result: 存储的东西比你想象的要复杂
         pred_box_tensor : torch.Tensor
             (N, 8, 3) prediction.
 
         gt_box_tensor : torch.Tensor
             (N, 8, 3) groundtruth bbx
+
+        score_tensor: optional, torch.Tensor
 
         uncertainty_tensor : optional, torch.Tensor
             (N, ?)
