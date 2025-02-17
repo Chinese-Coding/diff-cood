@@ -3,8 +3,7 @@ layering: True # 是否使用 `LayeringUNet2dConditionModel`
 logging_level: INFO
 
 # 和路径有关的一系列参数
-pretrained_model: ~/Desktop/stable-diffusion-2-1-base
-control_model: ~/Desktop/controlnet-sd21-depth-diffusers
+pretrained_model: ~/Desktop/stable-diffusion-2-1
 revision: null
 output_dir: ~/Desktop/logs/detection
 logging_dir: logging_dir

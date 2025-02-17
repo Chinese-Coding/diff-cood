@@ -51,8 +51,11 @@ def main(args):
     device = torch.device("cuda:0")
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
-    detection_head.train()
     detection_head.to(device)
+
+    detection_head.train()
+    prepare_processor.set_requires_grad_(False)
+    pcd_unet.requires_grad_(False)
 
     for epoch in range(first_epoch, args.train_epoches):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
@@ -61,8 +64,12 @@ def main(args):
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
             noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
-            # TODO: 这里训练 detection 的时候依然随机选择一个噪声是否依旧合理
-            timesteps = prepare_processor.generate_timestep(bsz, device).long()
+
+            if args.get("t", None) is not None:
+                timesteps = torch.full((bsz,), args.t, device=device).long()
+            else:
+                timesteps = prepare_processor.generate_timestep(bsz, device).long()
+
             encoder_hidden_states = prepare_processor.text_encoder(batch["pcd_inputs_ids"].to(device), return_dict=False)[0]
             noisy_latents = prepare_processor.add_noise(latents, noise, timesteps)
             logger.debug(f"{noisy_latents.shape=}, {encoder_hidden_states.shape=}")
@@ -84,15 +91,16 @@ def main(args):
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
-        save_dict = {
-            "epoch": epoch,
-            "detection_head": detection_head.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "lr_scheduler": lr_scheduler.state_dict(),
-        }
-        save_path = f"{args.output_dir}/checkpoint-{epoch}-det.pth"
-        torch.save(save_dict, save_path)
-        logger.success(f"将模型保存在 {save_path}")
+        if args.save_freq != -1 and epoch % args.save_freq == 0:
+            save_dict = {
+                "epoch": epoch,
+                "detection_head": detection_head.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "lr_scheduler": lr_scheduler.state_dict(),
+            }
+            save_path = f"{args.output_dir}/checkpoint-{epoch}-det.pth"
+            torch.save(save_dict, save_path)
+            logger.success(f"将模型保存在 {save_path}")
     writer.close()
 
 
@@ -101,5 +109,7 @@ if __name__ == "__main__":
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
     args.pcd_unet_file = "~/Desktop/logs/pcd_diffusion_2025_02_12/checkpoint-10-pcd.pth"
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_13"
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_17"
+    args.t = 261
+    args.save_freq = 2
     main(args)

@@ -54,8 +54,11 @@ def main(args):
     device = torch.device("cuda:0")
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
-    detection_head.train()
     detection_head.to(device)
+
+    detection_head.eval()
+    prepare_processor.set_requires_grad_(False)
+    pcd_unet.requires_grad_(False)
 
     # Create the dictionary for evaluation
     result_stat = {
@@ -65,6 +68,7 @@ def main(args):
     }
 
     for step, batch in enumerate(infer_dataloader):
+        logger.info(f"开始对 {step} 进行推理")
         with torch.no_grad():
             """diffusion 部分"""
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))

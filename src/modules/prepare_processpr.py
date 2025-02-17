@@ -42,8 +42,7 @@ class PrepareProcessor(nn.Module):
         :param all_return_tuple: 是否将全部返回值以 Tuple 的形式返回
         :param t: 用于推理时指定时刻
         """
-        latents = self.vae.encode(x).latent_dist.sample()
-        latents = latents * self.vae.config.scaling_factor
+        latents = self.get_latents(x)
         noise = torch.randn_like(latents) if noise is None else noise
         batch_size = latents.shape[0]
         timestep = torch.randint(0, self.num_train_timesteps, (batch_size,)) if t == -1 else torch.full((batch_size,), t)
