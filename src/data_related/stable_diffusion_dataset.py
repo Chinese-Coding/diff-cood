@@ -114,6 +114,7 @@ class StableDiffusionDataset(Dataset):
             self.postprocessor = DiffPostProcessor(args.postprocess_args)
             self.anchor_boxes = self.postprocessor.generate_anchor_boxes()
             self.anchor_boxes_tensor = torch.tensor(self.anchor_boxes)
+            logger.info(f"anchor box shape: {self.anchor_boxes_tensor.shape}")
 
     def reinitialize(self):
         # 每次初始化的时候记得清空之前存储的东西 (如果是第一次初始化可能不需要, 但是为了统一写法就不做判断了)
@@ -142,7 +143,7 @@ class StableDiffusionDataset(Dataset):
 
         logger.success(f"数据总长度: {len(self.flattened_database)}")
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         """
         Given the index, return the corresponding data.
 

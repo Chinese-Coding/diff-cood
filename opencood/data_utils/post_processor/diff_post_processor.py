@@ -142,7 +142,7 @@ class DiffPostProcessor:
 
         feature_map_shape = anchor_boxes.shape[:2]  # (H, W)
 
-        anchor_boxes = einops.rearrange(anchor_boxes, "H W anchor_num x -> (H W anchor_num) x", x=7)
+        anchor_boxes = anchor_boxes.reshape(-1, 7)
         # normalization factor, (H * W * anchor_num)
         anchors_d = np.sqrt(anchor_boxes[:, 4] ** 2 + anchor_boxes[:, 5] ** 2)
 
@@ -327,8 +327,7 @@ class DiffPostProcessor:
         box3d : torch.Tensor
             (N, W*L*2, 7)
         """
-        # batch size
-        N = deltas.shape[0]
+        N = deltas.shape[0]  # batch size
         deltas = deltas.permute(0, 2, 3, 1).contiguous().view(N, -1, 7)
         boxes3d = torch.zeros_like(deltas)
 

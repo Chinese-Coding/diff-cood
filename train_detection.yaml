@@ -82,7 +82,8 @@ postprocess_args:
   cav_lidar_range: *cav_lidar_range
   gt_range: *cav_lidar_range
   # TODO: 这个地方有问题, 如果只是简单的使用 ratio 会面临着
-  ratio: *ratio # 投影成 BEV 的缩放比例, 生成 anchor 时用来代替体素大小 (vx, vh)
+  # ratio: *ratio # 投影成 BEV 的缩放比例, 生成 anchor 时用来代替体素大小 (vx, vh)
+  ratio: 0.8
   anchor_args:
     l: 3.9
     w: 1.6

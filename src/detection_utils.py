@@ -12,7 +12,7 @@ from opencood.utils.eval_utils import voc_ap
 
 
 def init_detection_modules(args):
-    detection_head = DetectionHead(args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args)
+    detection_head = DetectionHead(args.in_channels, args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args)
     #  TODO: 这个上采用层用来把提取到的特征上采样到适用于 anchor 的分辨率
     upsample_layer = nn.Upsample(scale_factor=4, mode="bilinear")
     loss_fn = PointPillarLoss(args.loss_args)
