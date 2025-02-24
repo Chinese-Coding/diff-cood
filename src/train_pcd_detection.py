@@ -9,6 +9,7 @@ from modules.detection_unet_2d_condition import DetectionUNet2DConditionModel
 from modules.prepare_processpr import PrepareProcessor
 from opencood.visualization import simple_vis
 import matplotlib.pylab as plt
+from omegaconf import OmegaConf
 
 
 # def feature_visualize(feature: torch.Tensor, save_dir: str):
@@ -25,11 +26,29 @@ import matplotlib.pylab as plt
 #         plt.close()
 
 
+def create_dir_if_not_exists(path):
+    if not os.path.exists(path):
+        logger.warning(f"{path} 不存在, 将创建文件夹")
+        os.makedirs(path)
+
+
 def main(args):
+    """"""
+    """检查一下对应路径中的文件夹是否存在, 如果不存在给个 warning, 并创建文件夹, 省得每次都去命令行里面创建, 怪麻烦的"""
     # 路径展开
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
-    # args.pcd_unet_file = os.path.expanduser(args.pcd_unet_file)
+
+    # 首先检查主文件夹
+    if not os.path.exists(args.output_dir):
+        logger.warning(f"{args.output_dir} 不存在, 将创建文件夹及其下属的子文件夹")
+        os.makedirs(args.output_dir)
+    # 创建子文件夹
+    create_dir_if_not_exists(os.path.join(args.output_dir, "visualize"))
+    create_dir_if_not_exists(os.path.join(args.output_dir, "logging"))
+    logger.success("文件夹路径准备完毕")
+    vis_save_path_root = os.path.join(args.output_dir, "visualize")
+    OmegaConf.save(args, os.path.join(args.output_dir, "config.yaml"))
 
     writer = init_logging(args)
     train_dataloader, train_dataset = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf, need_dataset=True)
@@ -57,7 +76,9 @@ def main(args):
     first_epoch = 0
     detection_head, before_detection_head, loss_fn, optimizer, lr_scheduler = init_detection_modules(args)
     if "resume_file_det" in args:
-        checkpoint = load_detection_modules(args.resume_file_det, detection_head, optimizer, lr_scheduler)
+        checkpoint = load_detection_modules(
+            args.resume_file_det, before_detection_head, detection_head, optimizer, lr_scheduler
+        )
         first_epoch = checkpoint["epoch"] + 1
 
     """设备选择, 模型转移以及 train 不 train"""
@@ -73,6 +94,7 @@ def main(args):
                 state[k] = v.to(device)
 
     detection_head.train()
+    before_detection_head.train()
     prepare_processor.set_requires_grad_(False)
     pcd_unet.requires_grad_(False)
 
@@ -81,6 +103,7 @@ def main(args):
         for step, batch in enumerate(train_dataloader):
             """diffusion 部分"""
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
+            # TODO: 注意: 此处添加的噪声为 0, 需要验证添加什么样的噪声对于 diffusion 的影响
             noise = torch.zeros_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
 
@@ -106,6 +129,7 @@ def main(args):
             """目标检测部分"""
             pcd_feature = internal_sample[args.diffusion_args.internal_sample_lay_name]
             # feature_visualize(pcd_feature.cpu(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_before"))
+            # TODO: 如果检测效果依然不好, 就需要加深检测头
             feature = before_detection_head(pcd_feature.to(device, dtype=torch.float32))
             # feature_visualize(feature.cpu().detach(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_after"))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
@@ -130,8 +154,7 @@ def main(args):
                     reg_pred.detach().to(device),
                     dir_pred.detach().to(device),
                 )
-                logger.info(f"对 {step} 的结果进行可视化")
-                vis_save_path_root = os.path.join(args.output_dir, "visualize")
+                logger.info(f"对 {epoch} 中的 {step} 的结果进行可视化")
 
                 vis_save_path = os.path.join(vis_save_path_root, f"step_{step:05d}.png")
                 infer_result = {
@@ -147,6 +170,7 @@ def main(args):
             save_dict = {
                 "epoch": epoch,
                 "detection_head": detection_head.state_dict(),
+                "before_detection_head": before_detection_head.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "lr_scheduler": lr_scheduler.state_dict(),
             }
@@ -157,10 +181,8 @@ def main(args):
 
 
 if __name__ == "__main__":
-    from omegaconf import OmegaConf
-
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_24"
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25"
     args.batch_size = 4
     args.train_epoches = 30
     main(args)
