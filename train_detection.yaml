@@ -19,10 +19,10 @@ enable_xformers_memory_efficient_attention: true
 allow_tf32: true
 mixed_precision: fp32
 
-batch_size: 2
+batch_size: 4
 train_epoches: 10
 num_workers: 4
-shuffle: true
+shuffle: false
 
 # 优化器有关参数 (都是从 HEAL 抄的)
 learning_rate: 0.002
@@ -34,10 +34,13 @@ lr_scheduler: MultiStepLR
 lr_milestones: [15, 25]
 lr_gamma: 0.1
 
+# 保存 checkpoint 的参数
+save_freq: 2
+save_vis_interval: 100
 
 # TODO: 这里的参数是否需要和 lift_splat_shoot_args 的参数一致
-cav_lidar_range: &cav_lidar_range [-51.2, -51.2, -3, 51.2, 51.2, 1]
-ratio: &ratio 0.2
+cav_lidar_range: &cav_lidar_range [-102.4, -51.2, -3, 102.4, 51.2, 1]
+ratio: &ratio 0.1
 
 # LiftSplatShoot 模型需要的参数
 lift_splat_shoot_args:
@@ -71,10 +74,6 @@ change_args:
   patch_size: 5
   strategy: random
 
-# 下面是 detection 特有的参数
-preserved_up_indices: [0, 1, 2, 3] # 选择保留的 up 层的索引
-t: 261 # 选择一个时间戳
-
 postprocess_args:
   order: hwl
   max_num: 150
@@ -83,13 +82,13 @@ postprocess_args:
   gt_range: *cav_lidar_range
   # TODO: 这个地方有问题, 如果只是简单的使用 ratio 会面临着
   # ratio: *ratio # 投影成 BEV 的缩放比例, 生成 anchor 时用来代替体素大小 (vx, vh)
-  ratio: 0.8
+  ratio: *ratio
   anchor_args:
     l: 3.9
     w: 1.6
     h: 1.56
     r: &anchor_yaw [0, 90]
-    feature_stride: 2
+    feature_stride: 2 # 下采样率
     num: 2
   target_args:
     pos_threshold: 0.6
@@ -99,6 +98,27 @@ postprocess_args:
     dir_offset: 0.7853
     num_bins: 2
     anchor_yaw: *anchor_yaw
+
+# 注意:
+# `diffusion_args.internal_sample_lay_name`, `postprocess_args.anchor_args.feature_stride`
+# `before_detection_head_args.upsample_factor`, `before_detection_head_args.shrink_header.input_dim, output_dim`
+# `detection_head_args.in_channels` 之间有联系
+
+diffusion_args:
+  t: 261 # 选择一个时间戳
+  internal_sample_lay_name: "after_upsample_block_3"
+
+before_detection_head_args:
+  upsample_factor: 4
+  shrink_header:
+    kernal_size: [ 3 ]
+    stride: [ 1 ]
+    padding: [ 1 ]
+    output_dim: [ 256 ]
+    input_dim: 320 # 和选择的 diffusion 中的层数有关系
+
+detection_head_args:
+  in_channels: 256
 
 loss_args:
   pos_cls_weight: 2.0

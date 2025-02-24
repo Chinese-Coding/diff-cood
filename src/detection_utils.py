@@ -9,23 +9,31 @@ from modules.detection_head import DetectionHead
 from opencood.loss.point_pillar_loss import PointPillarLoss
 from opencood.utils import common_utils
 from opencood.utils.eval_utils import voc_ap
+from src.modules.before_detection_head import BeforeDetectionHead
 
 
 def init_detection_modules(args):
-    detection_head = DetectionHead(args.in_channels, args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args)
+    before_detection_head = BeforeDetectionHead(args.before_detection_head_args)
+    detection_head = DetectionHead(
+        args.detection_head_args.in_channels, args.postprocess_args.anchor_args.num, args.postprocess_args.dir_args
+    )
     #  TODO: 这个上采用层用来把提取到的特征上采样到适用于 anchor 的分辨率
-    upsample_layer = nn.Upsample(scale_factor=4, mode="bilinear")
     loss_fn = PointPillarLoss(args.loss_args)
     # 优化器参数从 HEAL 中的某个配置文件抄过来的, TODO: 应该写成超参数的形式
+
     optimizer = torch.optim.Adam(
-        detection_head.parameters(), lr=args.learning_rate, eps=args.adam_epsilon, weight_decay=args.adam_weight_decay
+        list(before_detection_head.parameters()) + list(detection_head.parameters()),
+        lr=args.learning_rate,
+        eps=args.adam_epsilon,
+        weight_decay=args.adam_weight_decay,
     )
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_milestones, gamma=args.lr_gamma)
-    return detection_head, upsample_layer, loss_fn, optimizer, lr_scheduler
+    return detection_head, before_detection_head, loss_fn, optimizer, lr_scheduler
 
 
-def load_detection_modules(resume_file_det, detection_head, optimizer=None, lr_scheduler=None):
+def load_detection_modules(resume_file_det, before_detection_head, detection_head, optimizer=None, lr_scheduler=None):
     checkpoint = torch.load(os.path.expanduser(resume_file_det), weights_only=False)
+    before_detection_head.load_state_dict(checkpoint["before_detection_head"])
     detection_head.load_state_dict(checkpoint["detection_head"])
     if optimizer is not None and lr_scheduler is not None:
         optimizer.load_state_dict(checkpoint["optimizer"])

@@ -63,6 +63,7 @@ class Canvas_BEV(object):
         """
         Args:
             xy (ndarray): (N, 2+) array of coordinates. Additional columns
+
                 beyond the first two are ignored.
 
         Returns:
@@ -465,6 +466,7 @@ class Canvas_BEV_heading_right(object):
                 self.canvas = cv2.putText(
                     self.canvas,
                     str(texts[i]),
+                    # str(curr_box_corners[start].tolist()),
                     tuple(curr_box_corners[text_corner].tolist()),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     box_text_size,

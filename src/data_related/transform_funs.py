@@ -32,8 +32,9 @@ def _project_points_to_bev_map(cav_lidar_range, points, ratio=0.1) -> np.ndarray
     bev_map[indices[:, 0], indices[:, 1]] = 1
     # 注意此处对 bev 图做了旋转 90 的处理 (不知道是逆时针还是顺时针), 只知道旋转之后可以和可视化时的 bev 图 (含有 gt 的)方向保持一致
     # 理论上来说这一点应该不影响模型的训练结果
-    rotated_bev_map = np.rot90(bev_map)
-    return rotated_bev_map
+    bev_map = np.rot90(bev_map)
+    bev_map = np.flip(bev_map, axis=0)
+    return bev_map
 
 
 def _get_resolution(cav_lidar_range, ratio=0.1):

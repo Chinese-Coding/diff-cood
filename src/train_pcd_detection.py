@@ -8,6 +8,21 @@ from detection_utils import init_detection_modules, load_detection_modules
 from modules.detection_unet_2d_condition import DetectionUNet2DConditionModel
 from modules.prepare_processpr import PrepareProcessor
 from opencood.visualization import simple_vis
+import matplotlib.pylab as plt
+
+
+# def feature_visualize(feature: torch.Tensor, save_dir: str):
+#     assert feature.dim() == 4 and feature.shape[0] == 1
+#     feature = feature.squeeze(0)  # shape: (320, 64, 64)
+#     for i in range(feature.shape[0]):
+#         logger.info(f"可视化第 {i} 层特征")
+#         channel = feature[i]
+#         channel_norm = (channel - channel.min()) / (channel.max() - channel.min() + 1e-8)
+#         plt.axis("on")
+#         plt.title(f"Channel {i}")
+#         plt.imshow(channel_norm, cmap="viridis")
+#         plt.savefig(os.path.join(save_dir, f"feature_channel{i}"), transparent=False, dpi=500)
+#         plt.close()
 
 
 def main(args):
@@ -22,10 +37,6 @@ def main(args):
     """特征提取网络"""
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
     pcd_unet = DetectionUNet2DConditionModel.from_pretrained(args.pretrained_model, revision=args.revision, subfolder="unet")
-    # pcd_unet = DetectionUNet2DConditionModel(cross_attention_dim=1024)
-    # pcd_unet_checkpoint = torch.load(args.pcd_unet_file, weights_only=False)
-    # pcd_unet.load_state_dict(pcd_unet_checkpoint["unet"])
-
     """显存优化部分"""
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
     weight_dtype = torch.float32
@@ -44,15 +55,16 @@ def main(args):
 
     """目标检测部分"""
     first_epoch = 0
-    detection_head, upsample_layer, loss_fn, optimizer, lr_scheduler = init_detection_modules(args)
+    detection_head, before_detection_head, loss_fn, optimizer, lr_scheduler = init_detection_modules(args)
     if "resume_file_det" in args:
         checkpoint = load_detection_modules(args.resume_file_det, detection_head, optimizer, lr_scheduler)
         first_epoch = checkpoint["epoch"] + 1
 
     """设备选择, 模型转移以及 train 不 train"""
-    device = torch.device("cuda:0")
+    device = torch.device("cuda:1")
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
+    before_detection_head.to(device)
     detection_head.to(device)
     # 需要显式地将优化器的状态迁移到目标设备 (没想到这么复杂原本以为只要模型移动到目标设备就能正常用了)
     for state in optimizer.state.values():
@@ -69,7 +81,7 @@ def main(args):
         for step, batch in enumerate(train_dataloader):
             """diffusion 部分"""
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
-            noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
+            noise = torch.zeros_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
 
             if args.get("t", None) is not None:
@@ -83,11 +95,19 @@ def main(args):
             internal_sample = {}  # TODO: 如果显存不够用的话需要从 cuda 转移到 cpu 上, 在 forward 里面修改
             model_pred = pcd_unet(noisy_latents, timesteps, encoder_hidden_states, internal_sample=internal_sample)[0]
 
+            """新增代码"""
+            # pos_equal_one = batch["pos_equal_one"][0]
+            # result = torch.any(pos_equal_one, dim=2).int()
+            # plt.axis("on")
+            # plt.imshow(result, cmap="viridis")
+            # plt.savefig(os.path.join("/home/zfq/Desktop/logs", "my_pos_equal_one.png"))
+            # plt.close()
+
             """目标检测部分"""
-            pcd_feature = internal_sample[args.internal_sample_lay_name]
-            # feature = upsample_layer(pcd_feature.to(device, dtype=torch.float32))
-            # 如果不把这个 feature 扩大呢? (对应的 anchor 生成的数目也要减少)
-            feature = pcd_feature.to(device, dtype=torch.float32)
+            pcd_feature = internal_sample[args.diffusion_args.internal_sample_lay_name]
+            # feature_visualize(pcd_feature.cpu(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_before"))
+            feature = before_detection_head(pcd_feature.to(device, dtype=torch.float32))
+            # feature_visualize(feature.cpu().detach(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_after"))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
             # fmt: off
             total_loss = loss_fn(
@@ -140,22 +160,7 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
-    # 从特征可视化来看, 在数据集上进行过预训练的, 检测效果并不是很好, 不如直接使用 diffusers 提供的预训练权重
-    # args.pcd_unet_file = "~/Desktop/logs/pcd_diffusion_2025_02_12/checkpoint-10-pcd.pth"
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_19"
-    args.t = 261
-    args.save_freq = 2
-    args.batch_size = 1
-    args.save_vis_interval = 100
-    # 这四个参数有匹配关系, 修改其中一个记得修改另一个
-    # internal_sample_lay_name 决定送入检测头的输入维度和每张特征图的大小, 这样就间接影响了生成 anchor 的数量
-    # 而 anchor 的数量还受, 投影粒度以及 anchor 的尺寸决定的, 还有 采样步长 `feature_stride`
-    args.internal_sample_lay_name = "after_upsample_block_3"
-    args.in_channels = 320
-    args.ratio = 0.1  # 此时生成的 bev_map 的尺寸为 (1024, 1024)
-    args.postprocess_args.ratio = 0.1
-    args.postprocess_args.anchor_args.feature_stride = 8
-
-    # args.resume_file_det = os.path.expanduser("~/Desktop/logs/pcd_detection_2025_02_17_afternoon/checkpoint-8-det.pth")
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_24"
+    args.batch_size = 4
     args.train_epoches = 30
     main(args)

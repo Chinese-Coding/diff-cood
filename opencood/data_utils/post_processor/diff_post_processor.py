@@ -16,6 +16,8 @@ import torch
 import torch.nn.functional as F
 
 from data_related.entity import ObjectBbxData
+from torch import Tensor
+
 from opencood.utils import box_utils
 from opencood.utils.box_overlaps import bbox_overlaps
 from opencood.utils.common_utils import limit_period
@@ -42,6 +44,7 @@ class DiffPostProcessor:
         vh, vw = postprocess_args.ratio, postprocess_args.ratio
         self.anchor_args.vw, self.anchor_args.vh = vh, vw
         self.anchor_args.W, self.anchor_args.H = math.ceil((range[3] - range[0]) / vw), math.ceil((range[4] - range[1]) / vh)
+        self.feature_stride = self.anchor_args.get("feature_stride", 2)
 
     def generate_gt_bbx(self, object_bbx_data: ObjectBbxData, transformation_matrix=np.eye(4)):
         """
@@ -107,11 +110,11 @@ class DiffPostProcessor:
         xrange = [self.cav_lidar_range[0], self.cav_lidar_range[3]]
         yrange = [self.cav_lidar_range[1], self.cav_lidar_range[4]]
 
-        feature_stride = self.anchor_args.get("feature_stride", 2)
-
         # vw is not precise, vw * feature_stride / 2 should be better?
-        x = np.linspace(xrange[0] + vw, xrange[1] - vw, W // feature_stride)
-        y = np.linspace(yrange[0] + vh, yrange[1] - vh, H // feature_stride)
+        x = np.linspace(xrange[0] + vw, xrange[1] - vw, W // self.feature_stride)
+        y = np.linspace(yrange[0] + vh, yrange[1] - vh, H // self.feature_stride)
+        """等比例变换一下"""
+        # l, w = l / self.feature_stride, w / self.feature_stride
 
         cx, cy = np.meshgrid(x, y)
         cx = np.tile(cx[..., np.newaxis], self.anchor_num)  # center
@@ -142,27 +145,29 @@ class DiffPostProcessor:
 
         feature_map_shape = anchor_boxes.shape[:2]  # (H, W)
 
+        """等比例缩放一下"""
+        # object_bbx_center = object_bbx_center.copy()
+        # object_bbx_center[:, 0] /= self.feature_stride  # x
+        # object_bbx_center[:, 1] /= self.feature_stride  # y
+        # object_bbx_center[:, 4] /= self.feature_stride  # w
+        # object_bbx_center[:, 5] /= self.feature_stride  # l
+
         anchor_boxes = anchor_boxes.reshape(-1, 7)
-        # normalization factor, (H * W * anchor_num)
-        anchors_d = np.sqrt(anchor_boxes[:, 4] ** 2 + anchor_boxes[:, 5] ** 2)
 
-        # (H, W, 2)
-        pos_equal_one, neg_equal_one = np.zeros((*feature_map_shape, self.anchor_num)), np.zeros(
-            (*feature_map_shape, self.anchor_num)
+        # 三个返回值, (H, W, 2), (H, W, 2), (H, W, self.anchor_num * 7)
+        pos_equal_one, neg_equal_one, targets = (
+            np.zeros((*feature_map_shape, self.anchor_num)),
+            np.zeros((*feature_map_shape, self.anchor_num)),
+            np.zeros((*feature_map_shape, self.anchor_num * 7)),
         )
-
-        # (H, W, self.anchor_num * 7)
-        targets = np.zeros((*feature_map_shape, self.anchor_num * 7))
 
         gt_box_center_valid = object_bbx_center[object_bbx_mask == 1]  # (n, 7)
         # shape: (n, 8, 3), (H * W * anchor_num, 8, 3)
-        gt_box_corner_valid, anchors_corner = box_utils.boxes_to_corners_3d(
-            gt_box_center_valid, self.order
-        ), box_utils.boxes_to_corners_3d(anchor_boxes, order=self.order)
-        anchors_standup_2d = box_utils.corner2d_to_standup_box(anchors_corner)  # (H * W * anchor_num, 4)
-        gt_standup_2d = box_utils.corner2d_to_standup_box(gt_box_corner_valid)  # (n, 4)
+        gt_box_corner_valid, anchors_corner = box_utils.boxes_to_corners_3d(gt_box_center_valid, self.order), box_utils.boxes_to_corners_3d(anchor_boxes, order=self.order) # fmt: skip
+        # shape: (n, 4), (H * W * anchor_num, 4)
+        gt_standup_2d, anchors_standup_2d = box_utils.corner2d_to_standup_box(gt_box_corner_valid), box_utils.corner2d_to_standup_box(anchors_corner) # fmt: skip
 
-        # (H * W * anchor_n)
+        # (H * W * anchor_num, n (gt_standup_2d 的 shape[0]))
         iou = bbox_overlaps(
             np.ascontiguousarray(anchors_standup_2d).astype(np.float32),
             np.ascontiguousarray(gt_standup_2d).astype(np.float32),
@@ -176,7 +181,7 @@ class DiffPostProcessor:
         """
         # the anchor boxes has the largest iou across
         # shape: (n)
-        id_highest = np.argmax(iou.T, axis=1)  # 找出每个 gt 框对应的最大I oU 的 anchor
+        id_highest = np.argmax(iou.T, axis=1)  # 找出每个 gt 框对应的最大 IoU 的 anchor
         # [0, 1, 2, ..., n-1]
         id_highest_gt = np.arange(iou.T.shape[0])
         # make sure all highest iou is larger than 0
@@ -187,6 +192,7 @@ class DiffPostProcessor:
         id_pos, id_pos_gt = np.where(iou > self.target_args["pos_threshold"])
         #  find anchors iou  params['neg_iou']
         id_neg = np.where(np.sum(iou < self.target_args["neg_threshold"], axis=1) == iou.shape[1])[0]
+        # `id_pos` 和 `id_highest` 之间是一个有交集 (也可能没有) 的关系, 有交集的部分会通过下面的 `np.unique` 去重
         id_pos = np.concatenate([id_pos, id_highest])
         id_pos_gt = np.concatenate([id_pos_gt, id_highest_gt])
         id_pos, index = np.unique(id_pos, return_index=True)
@@ -194,14 +200,16 @@ class DiffPostProcessor:
         id_neg.sort()
 
         # cal the target and set the equal one
+        # numpy.unravel_index 是一个用于将一个平坦的索引转换为多维数组的索引的函数. 它的作用是将一个一维的索引 (即平坦数组中的位置) 转换成指定形状的多维数组中的对应位置.
         index_x, index_y, index_z = np.unravel_index(id_pos, (*feature_map_shape, self.anchor_num))
         pos_equal_one[index_x, index_y, index_z] = 1
 
         # calculate the targets
+        anchors_d = np.sqrt(anchor_boxes[:, 4] ** 2 + anchor_boxes[:, 5] ** 2)  # normalization factor, (H * W * anchor_num)
         # fmt: off
-        targets[index_x, index_y, np.array(index_z) * 7] = (object_bbx_center[id_pos_gt, 0] - anchor_boxes[id_pos, 0]) / anchors_d[id_pos]
-        targets[index_x, index_y, np.array(index_z) * 7 + 1] = (object_bbx_center[id_pos_gt, 1] - anchor_boxes[id_pos, 1]) / anchors_d[id_pos]
-        targets[index_x, index_y, np.array(index_z) * 7 + 2] = (object_bbx_center[id_pos_gt, 2] - anchor_boxes[id_pos, 2]) / anchor_boxes[id_pos, 3]
+        targets[index_x, index_y, np.array(index_z) * 7] = (object_bbx_center[id_pos_gt, 0] - anchor_boxes[id_pos, 0]) / anchors_d[id_pos] # x 的偏移量
+        targets[index_x, index_y, np.array(index_z) * 7 + 1] = (object_bbx_center[id_pos_gt, 1] - anchor_boxes[id_pos, 1]) / anchors_d[id_pos] # y 的偏移量
+        targets[index_x, index_y, np.array(index_z) * 7 + 2] = (object_bbx_center[id_pos_gt, 2] - anchor_boxes[id_pos, 2]) / anchor_boxes[id_pos, 3] # z 的偏移量
         # fmt: on
         targets[index_x, index_y, np.array(index_z) * 7 + 3] = np.log(object_bbx_center[id_pos_gt, 3] / anchor_boxes[id_pos, 3])
         targets[index_x, index_y, np.array(index_z) * 7 + 4] = np.log(object_bbx_center[id_pos_gt, 4] / anchor_boxes[id_pos, 4])
@@ -219,7 +227,7 @@ class DiffPostProcessor:
         else:
             return pos_equal_one, neg_equal_one, targets
 
-    def postprocess(self, anchor_boxes, cls_pred, reg_pred, dir_pred, transformation_matrix=np.eye(4)):
+    def postprocess(self, anchor_boxes: Tensor, cls_pred, reg_pred, dir_pred, transformation_matrix=np.eye(4)):
         """
         Process the outputs of the model to 2D/3D bounding box.
         Step1: convert each cav's output to bounding box format
@@ -233,6 +241,16 @@ class DiffPostProcessor:
 
         prob = F.sigmoid(cls_pred.permute(0, 2, 3, 1))
         prob = prob.reshape(1, -1)
+        """等比例变换一下"""
+        # anchor_boxes = anchor_boxes.clone()
+        # anchor_boxes[:, :, :, 4] *= self.feature_stride
+        # anchor_boxes[:, :, :, 5] *= self.feature_stride
+        # reg_pred = einops.rearrange(reg_pred, "b anchor_num h w -> b h w anchor_num")
+        # reg_pred[:, :, :, 4] *= self.feature_stride
+        # reg_pred[:, :, :, 5] *= self.feature_stride
+        # reg_pred[:, :, :, 4 + 7] *= self.feature_stride
+        # reg_pred[:, :, :, 5 + 7] *= self.feature_stride
+        # reg_pred = einops.rearrange(reg_pred, "b anchor_num h w -> b h w anchor_num")
 
         batch_box3d = self.delta_to_boxes3d(reg_pred, anchor_boxes) if len(reg_pred.shape) == 4 else reg_pred.view(1, -1, 7)
 
