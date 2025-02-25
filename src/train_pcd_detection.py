@@ -45,11 +45,10 @@ def main(args):
         os.makedirs(args.output_dir)
     # 创建子文件夹
     create_dir_if_not_exists(os.path.join(args.output_dir, "visualize"))
-    create_dir_if_not_exists(os.path.join(args.output_dir, "logging"))
     logger.success("文件夹路径准备完毕")
     vis_save_path_root = os.path.join(args.output_dir, "visualize")
     OmegaConf.save(args, os.path.join(args.output_dir, "config.yaml"))
-
+    logger.success(f"将配置文件保存到 {args.output_dir} 目录中的 config.yaml 中.")
     writer = init_logging(args)
     train_dataloader, train_dataset = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf, need_dataset=True)
 
@@ -85,8 +84,8 @@ def main(args):
     device = torch.device("cuda:1")
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
-    before_detection_head.to(device)
-    detection_head.to(device)
+    before_detection_head.to(device, dtype=weight_dtype)
+    detection_head.to(device, dtype=weight_dtype)
     # 需要显式地将优化器的状态迁移到目标设备 (没想到这么复杂原本以为只要模型移动到目标设备就能正常用了)
     for state in optimizer.state.values():
         for k, v in state.items():
@@ -130,7 +129,7 @@ def main(args):
             pcd_feature = internal_sample[args.diffusion_args.internal_sample_lay_name]
             # feature_visualize(pcd_feature.cpu(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_before"))
             # TODO: 如果检测效果依然不好, 就需要加深检测头
-            feature = before_detection_head(pcd_feature.to(device, dtype=torch.float32))
+            feature = before_detection_head(pcd_feature.to(device, dtype=weight_dtype))
             # feature_visualize(feature.cpu().detach(), os.path.join("/home/zfq/Desktop/logs", "feature_visualize_after"))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
             # fmt: off
@@ -149,12 +148,12 @@ def main(args):
             if step % args.save_vis_interval == 0:
                 gt_box_tensor = batch["gt_bbx_list"][0]
                 pred_box_tensor, pred_score = train_dataset.postprocessor.postprocess(
-                    train_dataset.anchor_boxes_tensor.to(device),
-                    cls_pred.detach().to(device),
-                    reg_pred.detach().to(device),
-                    dir_pred.detach().to(device),
+                    train_dataset.anchor_boxes_tensor.to(device, dtype=weight_dtype),
+                    cls_pred.detach()[:1].to(device, dtype=weight_dtype),
+                    reg_pred.detach()[:1].to(device, dtype=weight_dtype),
+                    dir_pred.detach()[:1].to(device, dtype=weight_dtype),
                 )
-                logger.info(f"对 {epoch} 中的 {step} 的结果进行可视化")
+                logger.info(f"对 {epoch} 中的第 {step} 的结果进行可视化")
 
                 vis_save_path = os.path.join(vis_save_path_root, f"step_{step:05d}.png")
                 infer_result = {
@@ -182,7 +181,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25"
-    args.batch_size = 4
-    args.train_epoches = 30
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25_afternoon"
+    args.batch_size = 1
+    args.train_epoches = 10
     main(args)

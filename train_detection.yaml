@@ -40,7 +40,7 @@ save_vis_interval: 100
 
 # TODO: 这里的参数是否需要和 lift_splat_shoot_args 的参数一致
 cav_lidar_range: &cav_lidar_range [-102.4, -51.2, -3, 102.4, 51.2, 1]
-ratio: &ratio 0.1
+ratio: &ratio 0.4
 
 # LiftSplatShoot 模型需要的参数
 lift_splat_shoot_args:
@@ -102,6 +102,7 @@ postprocess_args:
 # 注意:
 # `diffusion_args.internal_sample_lay_name`, `postprocess_args.anchor_args.feature_stride`
 # `before_detection_head_args.upsample_factor`, `before_detection_head_args.shrink_header.input_dim, output_dim`
+# `before_detection_head_args.convnext.dim`
 # `detection_head_args.in_channels` 之间有联系
 
 diffusion_args:
@@ -110,6 +111,9 @@ diffusion_args:
 
 before_detection_head_args:
   upsample_factor: 4
+  convnext:
+    dim: 320
+    num_of_blocks: 3
   shrink_header:
     kernal_size: [ 3 ]
     stride: [ 1 ]

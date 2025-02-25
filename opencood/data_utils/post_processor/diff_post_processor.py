@@ -349,12 +349,11 @@ class DiffPostProcessor:
         deltas = deltas.permute(0, 2, 3, 1).contiguous().view(N, -1, 7)
         boxes3d = torch.zeros_like(deltas)
 
-        if deltas.is_cuda:
-            anchors = anchors.cuda()
-            boxes3d = boxes3d.cuda()
+        anchors = anchors.to(device=deltas.device, dtype=deltas.dtype)
+        boxes3d = boxes3d.to(device=deltas.device, dtype=deltas.dtype)
 
         # (W*L*2, 7)
-        anchors_reshaped = anchors.view(-1, 7).float()
+        anchors_reshaped = anchors.view(-1, 7).to(deltas.dtype)
         # the diagonal of the anchor 2d box, (W*L*2)
         anchors_d = torch.sqrt(anchors_reshaped[:, 4] ** 2 + anchors_reshaped[:, 5] ** 2)
         anchors_d = anchors_d.repeat(N, 2, 1).transpose(1, 2)
