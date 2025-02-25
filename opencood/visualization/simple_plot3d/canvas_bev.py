@@ -10,38 +10,56 @@ from functools import partial
 import cv2
 import matplotlib
 import numpy as np
+from loguru import logger
 
 
-class Canvas_BEV(object):
+def process_colors(canvas_xy, colors, colors_operand=None, get_canvas_coords=None):
+    match colors:
+        case None:
+            return np.full((len(canvas_xy), 3), fill_value=255, dtype=np.uint8)
+        case tuple():
+            assert len(colors) == 3
+            colors_tmp = np.zeros((len(canvas_xy), 3), dtype=np.uint8)
+            colors_tmp[..., :] = np.array(colors)
+            return colors_tmp
+        case np.ndarray:
+            assert len(colors) == len(canvas_xy)
+            return colors.astype(np.uint8)
+        case str():
+            colors = matplotlib.cm.get_cmap(colors)
+            if colors_operand is None:
+                # Get distances from (0, 0) (albeit potentially clipped)
+                origin_center = get_canvas_coords(np.zeros((1, 2)))[0][0]
+                colors_operand = np.sqrt(((canvas_xy - origin_center) ** 2).sum(axis=1))
+            # Normalize 0 ~ 1 for cmap
+            colors_operand = colors_operand - colors_operand.min()
+            colors_operand = colors_operand / colors_operand.max()
+
+            # Get cmap colors - note that cmap returns (*input_shape, 4), with
+            # colors scaled 0 ~ 1
+            colors = (colors(colors_operand)[:, :3] * 255).astype(np.uint8)
+            return colors
+        case _:
+            raise Exception("colors type {} was not an expected type".format(type(colors)))
+
+
+class Canvas_BEV:
     def __init__(
-        self,
-        canvas_shape=(1000, 1000),
-        canvas_x_range=(-50, 50),
-        canvas_y_range=(-50, 50),
-        canvas_bg_color=(0, 0, 0),
-        left_hand=False,
+        self, canvas_shape=(1000, 1000), canvas_x_range=(-50, 50), canvas_y_range=(-50, 50), canvas_bg_color=(0, 0, 0), left_hand=False, # fmt: skip
     ):
         """
         Args:
-            canvas_shape (Tuple[int]): Shape of BEV Canvas image. First element
-                corresponds to X range, the second element to Y range.
-            canvas_x_range (Tuple[int]): Range of X-coords to visualize. X is
-                vertical: negative ~ positive is top ~ down.
-            canvas_y_range (Tuple[int]): Range of Y-coords to visualize. Y is
-                horizontal: negative ~ positive is left ~ right.
-            canvas_bg_color (Tuple[int]): RGB (0 ~ 255) of Canvas background
-                color.
-            left_hand: (bool), whether the point cloud is left-hand coordinate,
-                V2X-Sim is right hand, and OPV2V is left hand.
+            canvas_shape (Tuple[int]): Shape of BEV Canvas image. First element corresponds to X range, the second element to Y range.
+            canvas_x_range (Tuple[int]): Range of X-coords to visualize. X is vertical: negative ~ positive is top ~ down.
+            canvas_y_range (Tuple[int]): Range of Y-coords to visualize. Y is horizontal: negative ~ positive is left ~ right.
+            canvas_bg_color (Tuple[int]): RGB (0 ~ 255) of Canvas background color.
+            left_hand: (bool), whether the point cloud is left-hand coordinate, V2X-Sim is right hand, and OPV2V is left hand.
 
             Vehicle is heading down. This code is naturally for right-hand coordinate.
         """
 
         # Sanity check ratios
-        if (canvas_shape[0] / canvas_shape[1]) != (
-            (canvas_x_range[0] - canvas_x_range[1]) / (canvas_y_range[0] - canvas_y_range[1])
-        ):
-
+        if (canvas_shape[0] / canvas_shape[1]) != ((canvas_x_range[0] - canvas_x_range[1]) / (canvas_y_range[0] - canvas_y_range[1])): # fmt: skip
             print("Not an error, but the x & y ranges are not proportional to canvas height & width.")
 
         self.canvas_shape = canvas_shape
@@ -62,21 +80,14 @@ class Canvas_BEV(object):
     def get_canvas_coords(self, xy):
         """
         Args:
-            xy (ndarray): (N, 2+) array of coordinates. Additional columns
-
-                beyond the first two are ignored.
-
+            xy (ndarray): (N, 2+) array of coordinates. Additional columns beyond the first two are ignored.
         Returns:
-            canvas_xy (ndarray): (N, 2) array of xy scaled into canvas
-                coordinates. Invalid locations of canvas_xy are clipped into
-                range. "x" is dim0, "y" is dim1 of canvas.
-            valid_mask (ndarray): (N,) boolean mask indicating which of
-                canvas_xy fits into canvas.
+            canvas_xy (ndarray): (N, 2) array of xy scaled into canvas coordinates.
+                Invalid locations of canvas_xy are clipped into range. "x" is dim0, "y" is dim1 of canvas.
+            valid_mask (ndarray): (N,) boolean mask indicating which of canvas_xy fits into canvas.
         """
         xy = np.copy(xy)  # prevent in-place modifications
-
-        x = xy[:, 0]
-        y = xy[:, 1]
+        x, y = xy[:, 0], xy[:, 1]
 
         if self.left_hand:
             y = -y
@@ -126,33 +137,7 @@ class Canvas_BEV(object):
         """
         if len(canvas_xy) == 0:
             return
-
-        if colors is None:
-            colors = np.full((len(canvas_xy), 3), fill_value=255, dtype=np.uint8)
-        elif isinstance(colors, tuple):
-            assert len(colors) == 3
-            colors_tmp = np.zeros((len(canvas_xy), 3), dtype=np.uint8)
-            colors_tmp[..., :] = np.array(colors)
-            colors = colors_tmp
-        elif isinstance(colors, np.ndarray):
-            assert len(colors) == len(canvas_xy)
-            colors = colors.astype(np.uint8)
-        elif isinstance(colors, str):
-            colors = matplotlib.cm.get_cmap(colors)
-            if colors_operand is None:
-                # Get distances from (0, 0) (albeit potentially clipped)
-                origin_center = self.get_canvas_coords(np.zeros((1, 2)))[0][0]
-                colors_operand = np.sqrt(((canvas_xy - origin_center) ** 2).sum(axis=1))
-
-            # Normalize 0 ~ 1 for cmap
-            colors_operand = colors_operand - colors_operand.min()
-            colors_operand = colors_operand / colors_operand.max()
-
-            # Get cmap colors - note that cmap returns (*input_shape, 4), with
-            # colors scaled 0 ~ 1
-            colors = (colors(colors_operand)[:, :3] * 255).astype(np.uint8)
-        else:
-            raise Exception("colors type {} was not an expected type".format(type(colors)))
+        colors = process_colors(canvas_xy, colors, colors_operand, self.get_canvas_coords)
 
         if radius == -1:
             self.canvas[canvas_xy[:, 0], canvas_xy[:, 1], :] = colors
@@ -176,19 +161,7 @@ class Canvas_BEV(object):
             text_corner (int): 0 ~ 3. Which corner of 3D box to write text at.
         """
         # Setup colors
-        if colors is None:
-            colors = np.full((len(boxes), 3), fill_value=255, dtype=np.uint8)
-        elif isinstance(colors, tuple):
-            assert len(colors) == 3
-            colors_tmp = np.zeros((len(boxes), 3), dtype=np.uint8)
-            colors_tmp[..., : len(colors)] = np.array(colors)
-            colors = colors_tmp
-        elif isinstance(colors, np.ndarray):
-            assert len(colors) == len(boxes)
-            colors = colors.astype(np.uint8)
-        else:
-            raise Exception("colors type {} was not an expected type".format(type(colors)))
-
+        colors = process_colors(boxes, colors)
         boxes = np.copy(boxes)  # prevent in-place modifications
 
         # Translate BEV 4 corners , [N, 4, 2]
@@ -238,38 +211,24 @@ class Canvas_BEV(object):
                 )
 
 
-class Canvas_BEV_heading_right(object):
+class Canvas_BEV_heading_right:
     def __init__(
-        self,
-        canvas_shape=(800, 2800),
-        canvas_x_range=(-140, 140),
-        canvas_y_range=(-40, 40),
-        canvas_bg_color=(0, 0, 0),
-        left_hand=True,
+        self, canvas_shape=(800, 2800), canvas_x_range=(-140, 140), canvas_y_range=(-40, 40), canvas_bg_color=(0, 0, 0), left_hand=True # fmt:skip
     ):
         """
         Args:
-            canvas_shape (Tuple[int]): Shape of BEV Canvas image. First element
-                corresponds to Y range, the second element to X range.
-            canvas_x_range (Tuple[int]): Range of X-coords to visualize. X is
-                horizontal: negative ~ positive is left ~ right.
-            canvas_y_range (Tuple[int]): Range of Y-coords to visualize. Y is
-                vertcal: negative ~ positive is top ~ down.
-            canvas_bg_color (Tuple[int]): RGB (0 ~ 255) of Canvas background
-                color.
-            left_hand: (bool), whether the point cloud is left-hand coordinate
-                V2X-Sim is right hand, and OPV2V is left hand.
+            canvas_shape (Tuple[int]): Shape of BEV Canvas image. First element corresponds to Y range, the second element to X range.
+            canvas_x_range (Tuple[int]): Range of X-coords to visualize. X is horizontal: negative ~ positive is left ~ right.
+            canvas_y_range (Tuple[int]): Range of Y-coords to visualize. Y is vertcal: negative ~ positive is top ~ down.
+            canvas_bg_color (Tuple[int]): RGB (0 ~ 255) of Canvas background color.
+            left_hand: (bool), whether the point cloud is left-hand coordinate V2X-Sim is right hand, and OPV2V is left hand.
 
             Different from Canvas_BEV, the vehicle is heading right.
             Naturally this code is designed for left hand coordinate
-
         """
 
         # Sanity check ratios
-        if (canvas_shape[1] / canvas_shape[0]) != (
-            (canvas_x_range[0] - canvas_x_range[1]) / (canvas_y_range[0] - canvas_y_range[1])
-        ):
-
+        if (canvas_shape[1] / canvas_shape[0]) != ((canvas_x_range[0] - canvas_x_range[1]) / (canvas_y_range[0] - canvas_y_range[1])): # fmt: skip
             print("Not an error, but the x & y ranges are not proportional to canvas height & width.")
 
         self.canvas_shape = canvas_shape
@@ -300,10 +259,10 @@ class Canvas_BEV_heading_right(object):
             valid_mask (ndarray): (N,) boolean mask indicating which of
                 canvas_xy fits into canvas.
         """
+        logger.debug(f"传入的点的 shape: {xy.shape=}")
         xy = np.copy(xy)  # prevent in-place modifications
 
-        x = xy[:, 0]
-        y = xy[:, 1]
+        x, y = xy[:, 0], xy[:, 1]
 
         if not self.left_hand:
             y = -y
@@ -316,7 +275,7 @@ class Canvas_BEV_heading_right(object):
             & (y < self.canvas_y_range[1])
         )
 
-        # Rescale points
+        # Rescale points (重新缩放点)
         # They are exactly lidar point coordinate
         x = (x - self.canvas_x_range[0]) / (self.canvas_x_range[1] - self.canvas_x_range[0])
         x = x * self.canvas_shape[1]
@@ -361,35 +320,11 @@ class Canvas_BEV_heading_right(object):
         if len(canvas_xy) == 0:
             return
 
-        if colors is None:
-            colors = np.full((len(canvas_xy), 3), fill_value=255, dtype=np.uint8)
-        elif isinstance(colors, tuple):
-            assert len(colors) == 3
-            colors_tmp = np.zeros((len(canvas_xy), 3), dtype=np.uint8)
-            colors_tmp[..., :] = np.array(colors)
-            colors = colors_tmp
-        elif isinstance(colors, np.ndarray):
-            assert len(colors) == len(canvas_xy)
-            colors = colors.astype(np.uint8)
-        elif isinstance(colors, str):
-            colors = matplotlib.cm.get_cmap(colors)
-            if colors_operand is None:
-                # Get distances from (0, 0) (albeit potentially clipped)
-                origin_center = self.get_canvas_coords(np.zeros((1, 2)))[0][0]
-                colors_operand = np.sqrt(((canvas_xy - origin_center) ** 2).sum(axis=1))
-
-            # Normalize 0 ~ 1 for cmap
-            colors_operand = colors_operand - colors_operand.min()
-            colors_operand = colors_operand / colors_operand.max()
-
-            # Get cmap colors - note that cmap returns (*input_shape, 4), with
-            # colors scaled 0 ~ 1
-            colors = (colors(colors_operand)[:, :3] * 255).astype(np.uint8)
-        else:
-            raise Exception("colors type {} was not an expected type".format(type(colors)))
+        colors = process_colors(canvas_xy, colors, colors_operand, self.get_canvas_coords)
 
         # Here the order is different from Canvas_BEV
         if radius == -1:
+            # TODO: 这里坐标有个反转啊
             self.canvas[canvas_xy[:, 1], canvas_xy[:, 0], :] = colors
         else:
             for color, (x, y) in zip(colors.tolist(), canvas_xy.tolist()):
@@ -411,18 +346,7 @@ class Canvas_BEV_heading_right(object):
             text_corner (int): 0 ~ 3. Which corner of 3D box to write text at.
         """
         # Setup colors
-        if colors is None:
-            colors = np.full((len(boxes), 3), fill_value=255, dtype=np.uint8)
-        elif isinstance(colors, tuple):
-            assert len(colors) == 3
-            colors_tmp = np.zeros((len(boxes), 3), dtype=np.uint8)
-            colors_tmp[..., : len(colors)] = np.array(colors)
-            colors = colors_tmp
-        elif isinstance(colors, np.ndarray):
-            assert len(colors) == len(boxes)
-            colors = colors.astype(np.uint8)
-        else:
-            raise Exception("colors type {} was not an expected type".format(type(colors)))
+        colors = process_colors(boxes, colors)
 
         boxes = np.copy(boxes)  # prevent in-place modifications
 
@@ -451,7 +375,6 @@ class Canvas_BEV_heading_right(object):
         # Draw the outer boundaries
         idx_draw_pairs = [(0, 1), (1, 2), (2, 3), (3, 0)]
         for i, (color, curr_box_corners) in enumerate(zip(colors.tolist(), bev_corners_canvas)):
-
             curr_box_corners = curr_box_corners.astype(np.int32)
             for start, end in idx_draw_pairs:
                 # Notice Difference Here
