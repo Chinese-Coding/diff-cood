@@ -56,6 +56,7 @@ def main(args):
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
     pcd_unet = DetectionUNet2DConditionModel.from_pretrained(args.pretrained_model, revision=args.revision, subfolder="unet")
     """显存优化部分"""
+    device = torch.device("cuda:1")
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
     weight_dtype = torch.float32
     # fmt: off
@@ -66,8 +67,9 @@ def main(args):
         case _: logger.error(f"使用了不受支持的 {args.mixed_precision}, 现在默认默认的 dtype: {weight_dtype}")
     # fmt: on
     prepare_processor.set_weight_dtype(weight_dtype)
-    if args.enable_xformers_memory_efficient_attention:
-        pcd_unet.enable_xformers_memory_efficient_attention()
+    with torch.cuda.device(device):
+        if args.enable_xformers_memory_efficient_attention:
+            pcd_unet.enable_xformers_memory_efficient_attention()
     if args.get("gradient_checkpointing", False):
         pcd_unet.enable_gradient_checkpointing()
 
@@ -80,8 +82,8 @@ def main(args):
         )
         first_epoch = checkpoint["epoch"] + 1
 
-    """设备选择, 模型转移以及 train 不 train"""
-    device = torch.device("cuda:1")
+    """模型转移以及 train 不 train"""
+
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
     before_detection_head.to(device, dtype=weight_dtype)
@@ -182,6 +184,6 @@ def main(args):
 if __name__ == "__main__":
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
     args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25_afternoon"
-    args.batch_size = 1
+    args.batch_size = 4
     args.train_epoches = 10
     main(args)

@@ -15,21 +15,35 @@ from detection_utils import load_detection_modules, init_detection_modules, calu
 from opencood.visualization import simple_vis
 
 
+def create_dir_if_not_exists(path):
+    if not os.path.exists(path):
+        logger.warning(f"{path} 不存在, 将创建文件夹")
+        os.makedirs(path)
+
+
 def main(args):
     # 路径展开
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
-    args.pcd_unet_file = os.path.expanduser(args.pcd_unet_file)
+
+    # 首先检查主文件夹
+    if not os.path.exists(args.output_dir):
+        logger.warning(f"{args.output_dir} 不存在, 将创建文件夹及其下属的子文件夹")
+        os.makedirs(args.output_dir)
+    # 创建子文件夹
+    create_dir_if_not_exists(os.path.join(args.output_dir, "visualize"))
+    logger.success("文件夹路径准备完毕")
+    vis_save_path_root = os.path.join(args.output_dir, "visualize")
+    OmegaConf.save(args, os.path.join(args.output_dir, "config.yaml"))
+    logger.success(f"将配置文件保存到 {args.output_dir} 目录中的 config.yaml 中.")
 
     infer_dataloader, infer_dataset = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf, True)
 
     """特征提取网络"""
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
-    pcd_unet = DetectionUNet2DConditionModel(cross_attention_dim=1024)
-    pcd_unet_checkpoint = torch.load(args.pcd_unet_file, weights_only=False)
-    pcd_unet.load_state_dict(pcd_unet_checkpoint["unet"])
-
+    pcd_unet = DetectionUNet2DConditionModel.from_pretrained(args.pretrained_model, revision=args.revision, subfolder="unet")
     """显存优化部分"""
+    device = torch.device("cuda:1")
     torch.backends.cuda.matmul.allow_tf32 = args.allow_tf32
     weight_dtype = torch.float32
     # fmt: off
@@ -40,23 +54,25 @@ def main(args):
         case _: logger.error(f"使用了不受支持的 {args.mixed_precision}, 现在默认默认的 dtype: {weight_dtype}")
     # fmt: on
     prepare_processor.set_weight_dtype(weight_dtype)
-    if args.enable_xformers_memory_efficient_attention:
-        pcd_unet.enable_xformers_memory_efficient_attention()
+    with torch.cuda.device(device):
+        if args.enable_xformers_memory_efficient_attention:
+            pcd_unet.enable_xformers_memory_efficient_attention()
     if args.get("gradient_checkpointing", False):
         pcd_unet.enable_gradient_checkpointing()
 
     """目标检测部分"""
-    detection_head, upsample_layer, _, _, _ = init_detection_modules(args)
+    detection_head, before_detection_head, _, _, _ = init_detection_modules(args)
     # 推理的时候一定要有模型权重
-    load_detection_modules(args.resume_file_det, detection_head)
+    load_detection_modules(args.resume_file_det, before_detection_head, detection_head)
 
-    """设备选择, 模型转移以及 train 不 train"""
-    device = torch.device("cuda:0")
+    """模型转移以及 train 不 train"""
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
-    detection_head.to(device)
+    before_detection_head.to(device, dtype=weight_dtype)
+    detection_head.to(device, dtype=weight_dtype)
 
     detection_head.eval()
+    before_detection_head.eval()
     prepare_processor.set_requires_grad_(False)
     pcd_unet.requires_grad_(False)
 
@@ -72,7 +88,7 @@ def main(args):
         with torch.no_grad():
             """diffusion 部分"""
             latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
-            noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
+            noise = torch.zeros_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
             # TODO: 这里训练 detection 的时候依然随机选择一个噪声是否依旧合理
             timesteps = prepare_processor.generate_timestep(bsz, device).long()
@@ -82,8 +98,8 @@ def main(args):
             model_pred = pcd_unet(noisy_latents, timesteps, encoder_hidden_states, internal_sample=internal_sample)[0]
 
             """目标检测部分"""
-            pcd_feature = internal_sample["after_upsample_block_3"]
-            feature = upsample_layer(pcd_feature.to(device, dtype=torch.float32))
+            pcd_feature = internal_sample[args.diffusion_args.internal_sample_lay_name]
+            feature = before_detection_head(pcd_feature.to(device, dtype=weight_dtype))
             cls_pred, reg_pred, dir_pred = detection_head(feature)
 
             """推理"""
@@ -100,8 +116,6 @@ def main(args):
 
             if (step % args.save_vis_interval == 0) and (pred_box_tensor is not None or gt_box_tensor is not None):
                 logger.info(f"对 {step} 的结果进行可视化")
-                vis_save_path_root = os.path.join(args.output_dir, "visualize")
-
                 vis_save_path = os.path.join(vis_save_path_root, f"step_{step:05d}.png")
                 infer_result = {
                     "pred_box_tensor": pred_box_tensor,
@@ -119,9 +133,9 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
-    args.pcd_unet_file = "~/Desktop/logs/pcd_diffusion_2025_02_12/checkpoint-10-pcd.pth"
-    args.resume_file_det = "~/Desktop/logs/pcd_detection_2025_02_12/checkpoint-9-det.pth"
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_12"
-    args.save_vis_interval = 40  # 从 heal 里面抄过来的
+    args.resume_file_det = "~/Desktop/logs/pcd_detection_2025_02_25_afternoon/checkpoint-8-det.pth"
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25_afternoon_infer"
+    args.root_dir = "/datasets/OPV2V/validate"
+    args.save_vis_interval = 50  # 从 heal 里面抄过来的
     args.batch_size = 1
     main(args)

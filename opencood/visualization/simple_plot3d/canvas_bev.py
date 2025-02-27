@@ -259,7 +259,7 @@ class Canvas_BEV_heading_right:
             valid_mask (ndarray): (N,) boolean mask indicating which of
                 canvas_xy fits into canvas.
         """
-        logger.debug(f"传入的点的 shape: {xy.shape=}")
+        # logger.debug(f"传入的点的 shape: {xy.shape=}") # debug 信息也输出, 先注释掉
         xy = np.copy(xy)  # prevent in-place modifications
 
         x, y = xy[:, 0], xy[:, 1]
