@@ -1,0 +1,145 @@
+mode: detection # 设定训练模式
+layering: True # 是否使用 `LayeringUNet2dConditionModel`
+logging_level: INFO
+
+# 和路径有关的一系列参数
+pretrained_model_args:
+  diffusion: ~/Desktop/stable-diffusion-2-1
+  controlnet: ~/Desktop/controlnet-sd21-depth-diffusers
+  revision: null
+
+output_dir: ~/Desktop/logs/detection
+logging_dir: logging_dir
+root_dir: /datasets/OPV2V/train
+
+# 加载 checkpoint 的参数 (detection 模式下应该使用预训练好的针对 OPV2V 数据集的 diffusion 模型)
+# resume_file: ~/Desktop/logs/diffusion/checkpoint-9
+# resume_file_det: ~/Desktop/logs/detection/checkpoint-0-det.pth
+
+# 显存优化
+# 显存优化方面的参数 (不包括 batch size, 虽然设置较小的 batch size 有助于降低显存占用)
+enable_xformers_memory_efficient_attention: true
+allow_tf32: true
+mixed_precision: fp32
+
+batch_size: 4
+train_epoches: 10
+num_workers: 8
+shuffle: true
+
+# 优化器有关参数 (都是从 HEAL 抄的)
+learning_rate: 0.002
+adam_epsilon: 1e-10
+adam_weight_decay: 1e-4
+
+# 学习率调度器有关参数 (都是从 HEAL 抄的)
+lr_scheduler: MultiStepLR
+lr_milestones: [15, 25]
+lr_gamma: 0.1
+
+# 保存 checkpoint 的参数
+save_freq: 2
+save_vis_interval: 100
+
+# TODO: 这里的参数是否需要和 lift_splat_shoot_args 的参数一致
+cav_lidar_range: &cav_lidar_range [-102.4, -51.2, -3, 102.4, 51.2, 1]
+ratio: &ratio 0.4
+
+# LiftSplatShoot 模型需要的参数
+lift_splat_shoot_args:
+  grid_conf:
+      xbound: [-51.2, 51.2, 0.2]   # Limit the range of the x direction and divide the grids
+      ybound: [-51.2, 51.2, 0.2]   # Limit the range of the y direction and divide the grids
+      zbound: [-10, 10, 20.0]   # Limit the range of the z direction and divide the grids
+      ddiscr: [2, 50, 48]
+      mode: 'LID'
+  data_aug_conf: # 数据增强所需的参数
+      resize_lim: [0.65, 0.7]
+      final_dim: [384, 512]
+      rot_lim: [-3.6, 3.6]
+      H: 600
+      W: 800
+      rand_flip: False
+      bot_pct_lim: [0.0, 0.05]
+      cams: ['camera0', 'camera1', 'camera2', 'camera3']
+      Ncams: 4
+  img_downsample: 8
+  img_features: 128
+  use_depth_gt: false
+  # HEAL 配置文件这里是 true, 但是我们还没有加载 depth 数据, 所以这里先设置为 false
+  # 还有一个考虑: 因为使用的是预训练模型, 所以实际上不需要深度信息作为监督信号
+  depth_supervision: false
+  camera_encoder: EfficientNet
+  pretrained_model_path: ~/fleet/diff-cood/checkpoints/net_epoch25.pth
+
+# 特征交换有关的参数
+change_args:
+  patch_size: 5
+  strategy: random
+
+postprocess_args:
+  order: hwl
+  max_num: 150
+  nms_thresh: 0.15
+  cav_lidar_range: *cav_lidar_range
+  gt_range: *cav_lidar_range
+  # TODO: 这个地方有问题, 如果只是简单的使用 ratio 会面临着
+  # ratio: *ratio # 投影成 BEV 的缩放比例, 生成 anchor 时用来代替体素大小 (vx, vh)
+  ratio: *ratio
+  anchor_args:
+    l: 3.9
+    w: 1.6
+    h: 1.56
+    r: &anchor_yaw [0, 90]
+    feature_stride: 2 # 下采样率
+    num: 2
+  target_args:
+    pos_threshold: 0.6
+    neg_threshold: 0.45
+    score_threshold: 0.2
+  dir_args: &dir_args
+    dir_offset: 0.7853
+    num_bins: 2
+    anchor_yaw: *anchor_yaw
+
+# 注意:
+# `diffusion_args.internal_sample_lay_name`, `postprocess_args.anchor_args.feature_stride`
+# `before_detection_head_args.upsample_factor`, `before_detection_head_args.shrink_header.input_dim, output_dim`
+# `before_detection_head_args.convnext.dim`
+# `detection_head_args.in_channels` 之间有联系
+
+diffusion_args:
+  t: 261 # 选择一个时间戳
+  internal_sample_lay_name: "after_upsample_block_3"
+
+before_detection_head_args:
+  upsample_factor: 4
+  convnext:
+    dim: 320
+    num_of_blocks: 3
+  shrink_header:
+    kernal_size: [ 3 ]
+    stride: [ 1 ]
+    padding: [ 1 ]
+    output_dim: [ 256 ]
+    input_dim: 320 # 和选择的 diffusion 中的层数有关系
+
+detection_head_args:
+  in_channels: 256
+
+loss_args:
+  pos_cls_weight: 2.0
+  cls_args:
+    type: 'SigmoidFocalLoss' # 没用
+    alpha: 0.25
+    gamma: 2.0
+    weight: 1.0
+  reg_args:
+    type: 'WeightedSmoothL1Loss' # 没用
+    sigma: 3.0
+    codewise: true
+    weight: 2.0
+  dir_args:
+    type: 'WeightedSoftmaxClassificationLoss' # 没用
+    weight: 0.2
+    args: *dir_args

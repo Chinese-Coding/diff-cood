@@ -18,6 +18,8 @@ class CAVData(BaseModel):
     bev_img: np.ndarray  # 同时刻下, 对应的 bev 图像, 用于推理阶段的目标检测
     origin_lidar: np.ndarray  # 同时刻下, 对应的 lidar 数据, 用于绘制图像
 
+    file_path: Path  # 记录当前数据的加载源 (为了老师今早的任务特地添加的参数)
+
 
 class PFTimestampData(BaseModel):
     lidar: str

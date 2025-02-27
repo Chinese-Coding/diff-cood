@@ -38,10 +38,19 @@ def get_optimizer_class(args):
 
 def init_dataloader(args, data_aug_conf, need_dataset=False):
     """嫌弃从 `args` 中的 `lift_splat_shoot_args` 传入 `data_aug_conf` 太长了, 于是从调用的地方传递"""
+    pretrained_model = args.get("pretrained_model", None)
+    if pretrained_model is None:
+        pretrained_model = args.pretrained_model_args.diffusion
+
+    revision = args.get("revision", None)
+    if revision is None:
+        pretrained_model_args = args.get("pretrained_model_args", None)
+        if pretrained_model_args is not None:
+            revision = args.pretrained_model_args.get("revision", None)
     tokenizer = AutoTokenizer.from_pretrained(
-        args.pretrained_model,
+        pretrained_model,
         subfolder="tokenizer",
-        revision=args.revision,
+        revision=revision,
         use_fast=False,
     )
     train_dataset = StableDiffusionDataset(args)

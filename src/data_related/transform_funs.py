@@ -36,10 +36,10 @@ def _project_points_to_bev_depth_map(cav_lidar_range, points: np.ndarray, ratio=
 
     valid_indices, valid_points = indices[mask], points[mask]
     # 初始化深度图为非常小的值（负无穷），这样可以确保任何有效的深度值都会覆盖
-    depth_map = np.full((img_row, img_col), -np.inf)  # 初始化为负无穷
+    depth_map = np.full((img_row, img_col), -np.inf)  # 使用一个非常大的数初始化
     # 向量化更新深度图，使用 np.maximum.at 直接更新深度图，选择每个像素的最大深度
     np.maximum.at(depth_map, (valid_indices[:, 0], valid_indices[:, 1]), valid_points[:, 2])
-
+    depth_map = np.nan_to_num(depth_map, nan=0.0, posinf=0.0, neginf=0.0)
     # 对 BEV 图像做旋转和翻转操作，确保方向一致
     depth_map = np.rot90(depth_map)
     depth_map = np.flip(depth_map, axis=0)
@@ -47,7 +47,7 @@ def _project_points_to_bev_depth_map(cav_lidar_range, points: np.ndarray, ratio=
     return depth_map
 
 
-def _project_points_to_bev_map(cav_lidar_range, points, ratio=0.1) -> np.ndarray:
+def _project_points_to_bev_map(cav_lidar_range, points: np.ndarray, ratio=0.1) -> np.ndarray:
     """
     从 opencood 中的 BasePreprocessor 中拿过来的函数 (方便变成函数). 用于将点云投影为 BEV 图
     :return shape: [H, W]
@@ -87,5 +87,19 @@ def pcd_transform(cav_lidar_range, ratio=0.1):
 
         # 如果是单个元素的列表，直接返回
         return bev_maps[0] if len(bev_maps) == 1 else bev_maps
+
+    return transform
+
+
+def dep_transform(cav_lidar_range, ratio=0.1):
+    def transform(pcd):
+        if not isinstance(pcd, list):  # 确保 pcd 是一个列表，统一处理
+            pcd = [pcd]
+
+        dep_maps = [
+            torch.tensor(_project_points_to_bev_depth_map(cav_lidar_range, i, ratio).copy()).unsqueeze(0).repeat(3, 1, 1)
+            for i in pcd
+        ]
+        return dep_maps[0] if len(dep_maps) == 1 else dep_maps
 
     return transform

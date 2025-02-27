@@ -157,6 +157,25 @@ class StableDiffusionDataset(Dataset):
             lidar_np=_pcd_to_np(pathes.lidar, False),
             bev_img=cv2.imread(pathes.bev),
             origin_lidar=_pcd_to_np(pathes.lidar),
+            file_path=pathes.yaml,  # 就拿 `PFTimestampData` 中的 yaml 字段当路径结果
+        )
+
+    def getitem_by_yaml_path(self, yaml_path: Path):
+        cav_path = Path(yaml_path).parent
+        timestamp = yaml_path.name.split(".")[0]
+        yaml_file, lidar_file, camera_files, depth_files, bev_file, lidar_splitted_files = _get_timestamp_data_path(
+            cav_path, timestamp
+        )
+        pathes = PFTimestampData(
+            yaml=yaml_file, lidar=lidar_file, cameras=camera_files, bev=bev_file, lidar_splitted=lidar_splitted_files
+        )
+        return CAVData(
+            cav_info=_load_yaml(pathes.yaml),
+            camera_data=_load_camera_data(pathes.cameras),
+            lidar_np=_pcd_to_np(pathes.lidar, False),
+            bev_img=cv2.imread(pathes.bev),
+            origin_lidar=_pcd_to_np(pathes.lidar),
+            file_path=pathes.yaml,  # 就拿 `PFTimestampData` 中的 yaml 字段当路径结果
         )
 
     def __len__(self):
@@ -173,23 +192,33 @@ class StableDiffusionDataset(Dataset):
 
     def collate_fn(self, batches: List[CAVData]):
         """增加了一个 `mode` 参数, 这个函数里面为了增加了很多对于这个变量的判断,"""
-        camera_data, lidar_np, img_inputs_ids, pcd_inputs_ids = [], [], [], []
+        camera_data, bev_list, img_inputs_ids, pcd_inputs_ids = [], [], [], []
         batch_lss_params = []
+        file_path_list = []
+        # TODO: 你说 python 会对这段代码进行优化吗?
+        if self.dep_transform is not None:
+            dep_list = []
 
         for batch in batches:
             camera_data.append(torch.stack(self.img_transform(batch.camera_data)))
-            lidar_np.append(self.pcd_transform(batch.lidar_np))
+            bev_list.append(self.pcd_transform(batch.lidar_np))
             img_inputs_ids.append(self._get_inputs_ids(self.img_captions))
             pcd_inputs_ids.append(self._get_inputs_ids(self.pcd_captions))
             batch_lss_params.append(self.get_lift_splat_shoot_inputs(self.data_aug_conf, batch, False))
+            file_path_list.append(batch.file_path)
+            if self.dep_transform is not None:
+                dep_list.append(self.dep_transform(batch.lidar_np))
 
         ret = {
             "img": torch.stack(camera_data),
-            "pcd": torch.stack(lidar_np),
+            "pcd": torch.stack(bev_list),
             "img_inputs_ids": torch.stack(img_inputs_ids),
             "pcd_inputs_ids": torch.stack(pcd_inputs_ids),
             "lss_params": LiftSplatShootParams.collate_fn(batch_lss_params),
+            "file_path_list": file_path_list,
         }
+        if self.dep_transform is not None:
+            ret["dep"] = torch.stack(dep_list)
 
         if self.mode == "detection":
             pos_equal_one_list, neg_equal_one_list, targets_list, gt_bbx_list = [], [], [], []
@@ -220,9 +249,10 @@ class StableDiffusionDataset(Dataset):
             ret["origin_lidar_list"] = origin_lidar_list
         return ret
 
-    def set_transform(self, img_transform, pcd_transform):
+    def set_transform(self, img_transform, pcd_transform, dep_transform=None):
         self.img_transform = img_transform
         self.pcd_transform = pcd_transform
+        self.dep_transform = dep_transform
 
     def set_tokenizer(self, tokenizer):
         self.tokenizer = tokenizer
