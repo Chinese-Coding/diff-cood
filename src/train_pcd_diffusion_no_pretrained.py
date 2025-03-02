@@ -4,13 +4,19 @@
 
 import torch
 import torch.nn.functional as F
-from diffusers import UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from loguru import logger
 from tqdm.auto import tqdm
 
 from diffusion_utils import get_optimizer_class, init_dataloader, init_logging, load_diffusion_modules2, save_modules
 from modules.prepare_processpr import PrepareProcessor
+from src.modules.detection_unet_2d_condition import DetectionUNet2DConditionModel
+
+
+def create_dir_if_not_exists(path):
+    if not os.path.exists(path):
+        logger.warning(f"{path} 不存在, 将创建文件夹")
+        os.makedirs(path)
 
 
 def main(args):
@@ -18,8 +24,13 @@ def main(args):
     args.output_dir = os.path.expanduser(args.output_dir)
     args.pretrained_model = os.path.expanduser(args.pretrained_model)
 
-    writer = init_logging(args)
+    if not os.path.exists(args.output_dir):
+        logger.warning(f"{args.output_dir} 不存在, 将创建文件夹及其下属的子文件夹")
+        os.makedirs(args.output_dir)
+    OmegaConf.save(args, os.path.join(args.output_dir, "config.yaml"))
+    logger.success(f"将配置文件保存到 {args.output_dir} 目录中的 config.yaml 中.")
 
+    writer = init_logging(args)
     optimizer_class = get_optimizer_class(args)
     train_dataloader = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf)
 
@@ -28,7 +39,12 @@ def main(args):
     简写说明: Img for Image (图像); Pcd for point cloud (点云, 缩写成三个字母, 而不是两个字母的 pc, 主要是为了和图像的缩写保持同样的长度, 这样看起来比较方便)
     """
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
-    pcd_unet = UNet2DConditionModel(cross_attention_dim=1024)  # 要和 encoder_hidden_states 的大小保持一致
+    # resnet_out_scale_factor=0.5 conv_in_kernel=1, conv_out_kernel=1
+    pcd_unet = DetectionUNet2DConditionModel(
+        in_channels=3,
+        out_channels=3,
+        cross_attention_dim=1024,
+    )  # 要和 encoder_hidden_states 的大小保持一致
     optimizer = optimizer_class(
         pcd_unet.parameters(),
         lr=args.learning_rate,
@@ -65,16 +81,23 @@ def main(args):
         case _: logger.error(f"使用了不受支持的 {args.mixed_precision}, 现在默认默认的 dtype: {weight_dtype}")
     # fmt: on
     prepare_processor.set_weight_dtype(weight_dtype)
-
-    if args.enable_xformers_memory_efficient_attention:
-        pcd_unet.enable_xformers_memory_efficient_attention()
+    device = torch.device("cuda:1")
+    with torch.cuda.device(device):
+        if args.enable_xformers_memory_efficient_attention:
+            pcd_unet.enable_xformers_memory_efficient_attention()
 
     if args.gradient_checkpointing:
         pcd_unet.enable_gradient_checkpointing()
 
-    device = torch.device("cuda:0")
     prepare_processor.to(device, weight_dtype)
     pcd_unet.to(device, dtype=weight_dtype)
+    # 需要显式地将优化器的状态迁移到目标设备 (没想到这么复杂原本以为只要模型移动到目标设备就能正常用了)
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+    prepare_processor.requires_grad_(False)
+    pcd_unet.train()
 
     global_step = (first_epoch - 1) * len(train_dataloader) / args.batch_size if first_epoch > 0 else 0
     logger.success(f"从 {first_epoch} 开始训练, 共训练 {args.train_epoches} 个 epoch")
@@ -83,14 +106,15 @@ def main(args):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
         progress_bar = tqdm(range(0, len(train_dataloader)), initial=0, desc=f"Epoch: {epoch}/{args.train_epoches}")
         for step, batch in enumerate(train_dataloader):
-            latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
+            latents = batch["pcd"].to(device, dtype=weight_dtype)
             noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
             timesteps = prepare_processor.generate_timestep(bsz, device).long()
             encoder_hidden_states = prepare_processor.text_encoder(batch["pcd_inputs_ids"].to(device), return_dict=False)[0]
             noisy_latents = prepare_processor.add_noise(latents, noise, timesteps)
             logger.debug(f"{noisy_latents.shape=}, {encoder_hidden_states.shape=}")
-            model_pred = pcd_unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
+            internal_sample = {}
+            model_pred = pcd_unet(noisy_latents, timesteps, encoder_hidden_states, internal_sample=internal_sample)[0]
 
             """从原版那边又抄过来的代码, 每次都从 `prepare_processor` 里面拿东西, 看着比较奇怪, 先这样写着"""
             if prepare_processor.noise_scheduler.config.prediction_type == "epsilon":
@@ -115,7 +139,8 @@ def main(args):
             progress_bar.update(1)
             global_step += 1
             progress_bar.set_postfix(**pcd_logs)
-        save_modules(args.output_dir, epoch, pcd_unet, optimizer, lr_scheduler, "pcd")
+        if args.save_freq != -1 and epoch % args.save_freq == 0:
+            save_modules(args.output_dir, epoch, pcd_unet, optimizer, lr_scheduler, "pcd")
 
     writer.close()
 
@@ -126,8 +151,8 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
-    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_02_12")
-    args.batch_size = 16
-    args.num_workers = 16
-    args.train_epoches = 15
+    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_03_01")
+    args.batch_size = 1
+    args.num_workers = 4
+    args.train_epoches = 30
     main(args)
