@@ -4,9 +4,9 @@ import torch
 
 from modules.prepare_processpr import PrepareProcessor
 
-
 torch.autograd.set_detect_anomaly(True)
 import torch.nn.functional as F
+from diffusers.optimization import get_scheduler
 from loguru import logger
 from torch import nn
 from tqdm.auto import tqdm
@@ -15,14 +15,14 @@ from data_related.entity import LiftSplatShootParams
 from diffusion_utils import (
     get_change_fun,
     get_optimizer_class,
-    init_datasloader,
+    init_dataloader,
     init_logging,
     load_diffusion_modules2,
     save_modules2,
 )
 from modules.layering_unet_2dc_model import LayeringUNet2DCModel
 from opencood.models.lift_splat_shoot import LiftSplatShoot
-from diffusers.optimization import get_scheduler
+
 
 def main(args):
     # 路径展开
@@ -33,13 +33,17 @@ def main(args):
 
     _change = get_change_fun(args.change_args)
     optimizer_class = get_optimizer_class(args)
-    train_dataloader = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf)
-    
+    train_dataloader = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf)
+
     prepare_processor = PrepareProcessor(args.pretrained_model, args.revision)
-    img_unet: LayeringUNet2DCModel = LayeringUNet2DCModel.from_pretrained(args.pretrained_model, subfolder="unet", revision=args.revision)
-    pcd_unet: LayeringUNet2DCModel = LayeringUNet2DCModel.from_pretrained(args.pretrained_model, subfolder="unet", revision=args.revision)
-    optimizer  = optimizer_class(
-        list(img_unet.parameters()) +  list(pcd_unet.parameters()),
+    img_unet: LayeringUNet2DCModel = LayeringUNet2DCModel.from_pretrained(
+        args.pretrained_model, subfolder="unet", revision=args.revision
+    )
+    pcd_unet: LayeringUNet2DCModel = LayeringUNet2DCModel.from_pretrained(
+        args.pretrained_model, subfolder="unet", revision=args.revision
+    )
+    optimizer = optimizer_class(
+        list(img_unet.parameters()) + list(pcd_unet.parameters()),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -54,7 +58,6 @@ def main(args):
 
     img_unet.train()
     pcd_unet.train()
-    
 
     """加载权重 (上面那个是预训练权重, 下面这个是自己的权重)"""
     first_epoch, img_loss, pcd_loss = 0, 0, 0  # 为保存权重特地将变量声明到前面
@@ -79,7 +82,7 @@ def main(args):
     if args.enable_xformers_memory_efficient_attention:
         img_unet.enable_xformers_memory_efficient_attention()
         pcd_unet.enable_xformers_memory_efficient_attention()
-    
+
     if args.gradient_checkpointing:
         img_unet.enable_gradient_checkpointing()
         pcd_unet.enable_gradient_checkpointing()
@@ -132,15 +135,19 @@ def main(args):
             只需要修改雷达监测范围以及生成体素的粒度就能改变 BEV 图的分辨率吗?
             """
             timestep = prepare_processor.generate_timestep().item()
-            
+
             """处理图像"""
             img_noise, img_params = prepare_processor.prepare(
                 img.to(device, dtype=weight_dtype), batch["img_inputs_ids"].to(device), False, timestep
             )
             pcd_noise, pcd_params = prepare_processor.prepare(
-                batch["pcd"].to(device, dtype=weight_dtype), batch["pcd_inputs_ids"].to(device), False, timestep, noise=img_noise
+                batch["pcd"].to(device, dtype=weight_dtype),
+                batch["pcd_inputs_ids"].to(device),
+                False,
+                timestep,
+                noise=img_noise,
             )
-            assert torch.allclose(img_noise, pcd_noise, atol=1e-6) # 如果给出的时间片相同的话, 两者生成的噪声应该是一致的
+            assert torch.allclose(img_noise, pcd_noise, atol=1e-6)  # 如果给出的时间片相同的话, 两者生成的噪声应该是一致的
             noise = img_noise
             img_params.to(device)
             pcd_params.to(device)

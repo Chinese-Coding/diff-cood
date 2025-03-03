@@ -183,7 +183,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_detection.yaml"))
-    args.output_dir = "~/Desktop/logs/pcd_detection_2025_02_25_afternoon"
-    args.batch_size = 4
+    args.output_dir = "~/Desktop/logs/pcd_detection_2025_03_03"
+    args.batch_size = 2
     args.train_epoches = 10
     main(args)

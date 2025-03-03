@@ -9,7 +9,7 @@ from detection_utils import caluclate_tp_fp, eval_final_results, init_detection_
 from diffusion_utils import (
     enable_xformers_memory_efficient_attention,
     get_change_fun,
-    init_datasloader,
+    init_dataloader,
     init_load_lss_model,
     init_logging,
     load_diffusion_processor,
@@ -28,7 +28,7 @@ def main(args):
 
     # 没有看错, 这里先加载 train 数据集, 因为针对目标检测任务还是在 train 数据集上进行训练
     _change = get_change_fun(args.change_args)
-    infer_dataloader, infer_dataset = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf, True)
+    infer_dataloader, infer_dataset = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf, True)
 
     """加载模型 (要是能写在一行就好了, 这几行代码有很明显的并列关系)"""
     img_processor = ImgProcessor(args.pretrained_model, args.revision, args.control_model, args.layering)

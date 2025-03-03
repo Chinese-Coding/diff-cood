@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
         {
             "name": "debug for train img diffusion",
             "type": "debugpy",
@@ -37,7 +38,32 @@
         "justMyCode": false,
         "cwd": "${workspaceFolder}",
         "env": {
-            "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}:${workspaceFolder}/src:${workspaceFolder}/opencood"
+                "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}:${workspaceFolder}/src:${workspaceFolder}/opencood"
+            }
+        },
+        {
+            "name": "debug for train pcd diffusion",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/train_pcd_diffusion.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}:${workspaceFolder}/src:${workspaceFolder}/opencood"
+            }
+        },
+        {
+            "name": "debug for train pcd detection with dep",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/train_pcd_detection_with_dep.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}:${env:PYTHONPATH}:${workspaceFolder}/src:${workspaceFolder}/opencood"
+            }
         }
-    }]
+    ]
 }

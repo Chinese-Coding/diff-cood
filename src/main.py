@@ -11,7 +11,7 @@ from tqdm.auto import tqdm
 from diffusion_utils import (
     enable_xformers_memory_efficient_attention,
     get_optimizer_class,
-    init_datasloader,
+    init_dataloader,
     init_modules,
     remove_checkpoints,
     save_checkpoint,
@@ -30,7 +30,7 @@ def main(args):
     optimizer_class = get_optimizer_class(args)
 
     """模型数据集部分"""
-    train_dataloader = init_datasloader(args)
+    train_dataloader = init_dataloader(args)
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)

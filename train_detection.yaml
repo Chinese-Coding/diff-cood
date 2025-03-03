@@ -40,7 +40,7 @@ save_vis_interval: 100
 
 # TODO: 这里的参数是否需要和 lift_splat_shoot_args 的参数一致
 cav_lidar_range: &cav_lidar_range [-102.4, -51.2, -3, 102.4, 51.2, 1]
-ratio: &ratio 0.4
+ratio: &ratio 0.2
 
 # LiftSplatShoot 模型需要的参数
 lift_splat_shoot_args:

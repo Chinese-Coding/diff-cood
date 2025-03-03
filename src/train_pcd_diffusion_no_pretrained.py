@@ -106,6 +106,7 @@ def main(args):
         logger.success(f"第 {epoch} 个 epoch 开始训练")
         progress_bar = tqdm(range(0, len(train_dataloader)), initial=0, desc=f"Epoch: {epoch}/{args.train_epoches}")
         for step, batch in enumerate(train_dataloader):
+            # latents = prepare_processor.get_latents(batch["pcd"].to(device, dtype=weight_dtype))
             latents = batch["pcd"].to(device, dtype=weight_dtype)
             noise = torch.randn_like(latents)  # 训练 `prepare_processor.num_train_timesteps` 前, 计算出 noise 的形状
             bsz = latents.shape[0]
@@ -151,8 +152,8 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     args = OmegaConf.load(os.path.expanduser("~/fleet/diff-cood/train_diffusion.yaml"))
-    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_03_01")
-    args.batch_size = 1
-    args.num_workers = 4
+    args.output_dir = os.path.expanduser("~/Desktop/logs/pcd_diffusion_2025_03_03")
+    args.batch_size = 2
+    args.num_workers = 8
     args.train_epoches = 30
     main(args)

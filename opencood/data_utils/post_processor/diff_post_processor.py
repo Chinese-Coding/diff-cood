@@ -21,6 +21,8 @@ from torch import Tensor
 from opencood.utils import box_utils
 from opencood.utils.box_overlaps import bbox_overlaps
 from opencood.utils.common_utils import limit_period
+from data_related.entity import CAVData
+from loguru import logger
 
 
 class DiffPostProcessor:
@@ -98,9 +100,10 @@ class DiffPostProcessor:
         gt_box = projected_object_bbx_corner[selected_indices]
         return box_utils.mask_boxes_outside_range_numpy(gt_box, self.gt_range, order=None)
 
-    def generate_object_center_lidar(self, cav_data: Dict, ref_lidar_pose, enlarge_z=False):
+    def generate_object_center_lidar(self, cav_data: [CAVData | list], ref_lidar_pose, enlarge_z=False):
         """使用 lidar 传感器时, 对应的 object center"""
-        if isinstance(cav_data, dict):
+        logger.debug(f"{type(cav_data)}")
+        if isinstance(cav_data, CAVData):
             vehicles = cav_data.cav_info["vehicles"]
         elif isinstance(cav_data, list):
             assert len(cav_data) == 1

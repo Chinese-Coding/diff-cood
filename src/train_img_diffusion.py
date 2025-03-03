@@ -12,7 +12,7 @@ from data_related.entity import LiftSplatShootParams
 from diffusion_utils import (
     enable_xformers_memory_efficient_attention_with_one_processor,
     get_optimizer_class,
-    init_datasloader,
+    init_dataloader,
     init_logging,
     init_modules,
     load_diffusion_modules,
@@ -31,7 +31,7 @@ def main(args):
     writer = init_logging(args)
 
     optimizer_class = get_optimizer_class(args)
-    train_dataloader = init_datasloader(args, args.lift_splat_shoot_args.data_aug_conf)
+    train_dataloader = init_dataloader(args, args.lift_splat_shoot_args.data_aug_conf)
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
